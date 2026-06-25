@@ -5,6 +5,7 @@ import {
   text,
   boolean,
   decimal,
+  jsonb,
   pgEnum,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
@@ -37,6 +38,7 @@ export const freeAgents = pgTable("free_agents", {
   loyaltyValue: integer("loyalty_value").notNull(),
   moneyValue: integer("money_value").notNull(),
   lengthValue: integer("length_value").notNull(),
+  ratings: jsonb("ratings"),
   winningOfferId: integer("winning_offer_id").references(
     (): AnyPgColumn => offers.id,
     { onDelete: "set null" },

@@ -11,11 +11,16 @@ export function SeasonManager() {
 
   // create form
   const [newLink, setNewLink] = useState("");
+  const [newSheets, setNewSheets] = useState("");
   const [newCurrent, setNewCurrent] = useState(true);
   const [creating, setCreating] = useState(false);
-  const [lastDetected, setLastDetected] = useState<{
+  const [phase, setPhase] = useState<"" | "FILING" | "INGESTING">("");
+  const [lastResult, setLastResult] = useState<{
     season: number;
     created: boolean;
+    ingested?: number;
+    ratings?: number;
+    skipped?: number;
   } | null>(null);
 
   async function refresh() {
@@ -39,20 +44,48 @@ export function SeasonManager() {
     e.preventDefault();
     setCreating(true);
     setError(null);
-    setLastDetected(null);
+    setLastResult(null);
     try {
-      const result = await seasonsApi.createFromLink({
+      // 1) pull + file (auto-detect season)
+      setPhase("FILING");
+      const fileRes = await seasonsApi.createFromLink({
         leagueLink: newLink,
         makeCurrent: newCurrent,
       });
-      setLastDetected({ season: result.detectedSeason, created: result.created });
+
+      let ingested: number | undefined;
+      let ratings: number | undefined;
+      let skipped: number | undefined;
+
+      // 2) if a sheets link was provided, save it and ingest
+      if (newSheets.trim()) {
+        await seasonsApi.update(fileRes.season.id, {
+          sheetsLink: newSheets.trim(),
+        });
+        setPhase("INGESTING");
+        const ing = await seasonsApi.ingestFAs(fileRes.season.id);
+        ingested = ing.inserted;
+        ratings = ing.ratingsAttached;
+        skipped =
+          ing.unmatchedFromTeamSheet.length + ing.unmatchedFromValuesSheet.length;
+      }
+
+      setLastResult({
+        season: fileRes.detectedSeason,
+        created: fileRes.created,
+        ingested,
+        ratings,
+        skipped,
+      });
       setNewLink("");
+      setNewSheets("");
       setNewCurrent(true);
       await refresh();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message.toUpperCase() : "CREATE FAILED");
+      setError(err instanceof ApiError ? err.message.toUpperCase() : "FAILED");
     } finally {
       setCreating(false);
+      setPhase("");
     }
   }
 
@@ -80,15 +113,15 @@ export function SeasonManager() {
         className="border rule p-5 sm:p-6 mb-8 bg-[color:var(--ink-2)] space-y-4"
       >
         <div className="flex items-baseline justify-between gap-3">
-          <div className="eyebrow opacity-70">PULL A LEAGUE FILE</div>
+          <div className="eyebrow opacity-70">FILE A NEW SEASON</div>
           <div className="font-mono text-[10px] opacity-40">
-            SEASON AUTO-DETECTED FROM JSON
+            SEASON AUTO-DETECTED · SHEETS OPTIONAL
           </div>
         </div>
 
         <label className="block">
           <div className="font-mono text-[10px] tracking-widest opacity-60 mb-1">
-            LEAGUE LINK
+            LEAGUE LINK (DROPBOX)
           </div>
           <input
             type="url"
@@ -97,6 +130,21 @@ export function SeasonManager() {
             onChange={(e) => setNewLink(e.target.value)}
             disabled={creating}
             placeholder="https://www.dropbox.com/scl/fi/.../league.json.gz?…"
+            className="w-full bg-transparent border rule px-3 py-2 outline-none font-mono text-sm focus:border-[var(--leather)] transition-colors"
+          />
+        </label>
+
+        <label className="block">
+          <div className="font-mono text-[10px] tracking-widest opacity-60 mb-1 flex items-baseline justify-between">
+            <span>SHEETS LINK (OPTIONAL)</span>
+            <span className="opacity-50">IF SET — AUTO-INGESTS FAs AFTER FILING</span>
+          </div>
+          <input
+            type="url"
+            value={newSheets}
+            onChange={(e) => setNewSheets(e.target.value)}
+            disabled={creating}
+            placeholder="https://docs.google.com/spreadsheets/d/…"
             className="w-full bg-transparent border rule px-3 py-2 outline-none font-mono text-sm focus:border-[var(--leather)] transition-colors"
           />
         </label>
@@ -115,19 +163,41 @@ export function SeasonManager() {
           <button
             type="submit"
             disabled={creating || !newLink}
-            className="bg-[var(--leather)] text-[var(--paper)] px-5 py-2 font-mono text-sm tracking-wider hover:bg-[var(--leather-2)] disabled:bg-[color:var(--ink-2)] disabled:text-[color:rgba(243,237,225,0.3)] disabled:cursor-not-allowed transition-colors"
+            className="bg-[var(--leather)] text-[var(--paper)] px-5 py-2 font-mono text-sm tracking-wider hover:bg-[var(--leather-2)] disabled:bg-[color:var(--ink-2)] disabled:text-[color:rgba(243,237,225,0.3)] disabled:cursor-not-allowed transition-colors min-w-[12rem] flex items-center justify-center gap-2"
           >
-            {creating ? "PULLING & FILING…" : "PULL & FILE"}
+            {creating ? (
+              <>
+                <span className="spinner" />
+                <span>{phase || "WORKING"}…</span>
+              </>
+            ) : newSheets.trim() ? (
+              "PULL · FILE · INGEST"
+            ) : (
+              "PULL & FILE"
+            )}
           </button>
         </div>
 
-        {lastDetected && (
-          <div className="border-l-2 border-[var(--leather)] pl-3 py-1 font-mono text-[11px] tracking-widest">
+        {lastResult && (
+          <div className="border-l-2 border-[var(--leather)] pl-3 py-1 font-mono text-[11px] tracking-widest flex flex-wrap items-baseline gap-x-4 gap-y-1">
             <span className="text-[var(--leather)]">
-              {lastDetected.created ? "FILED" : "UPDATED"}
+              {lastResult.created ? "FILED" : "UPDATED"}
             </span>
-            <span className="opacity-60"> · DETECTED SEASON </span>
-            <span className="display text-xl">{lastDetected.season}</span>
+            <span className="opacity-60">SEASON</span>
+            <span className="display text-xl">{lastResult.season}</span>
+            {lastResult.ingested !== undefined && (
+              <>
+                <span className="opacity-40">·</span>
+                <span className="text-[var(--leather)]">INGESTED</span>
+                <span>{lastResult.ingested} FAs</span>
+                <span className="opacity-60">
+                  · {lastResult.ratings}/{lastResult.ingested} with ratings
+                </span>
+                {lastResult.skipped ? (
+                  <span className="opacity-60">· {lastResult.skipped} skipped</span>
+                ) : null}
+              </>
+            )}
           </div>
         )}
       </form>

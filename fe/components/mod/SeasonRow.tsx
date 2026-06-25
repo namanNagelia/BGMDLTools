@@ -5,6 +5,7 @@ import {
   ApiError,
   mod,
   seasons as seasonsApi,
+  type IngestResult,
   type ParsedSheets,
   type Season,
 } from "@/lib/api";
@@ -43,6 +44,10 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
 
   // delete confirm
   const [confirmDel, setConfirmDel] = useState(false);
+
+  // ingest
+  const [ingesting, setIngesting] = useState(false);
+  const [ingestResult, setIngestResult] = useState<IngestResult | null>(null);
 
   async function handlePullJson() {
     setMode("json");
@@ -98,6 +103,19 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
       await onChanged();
     } catch (err) {
       onError(err instanceof ApiError ? err.message.toUpperCase() : "FAILED");
+    }
+  }
+
+  async function handleIngest() {
+    setIngesting(true);
+    setIngestResult(null);
+    try {
+      const result = await seasonsApi.ingestFAs(season.id);
+      setIngestResult(result);
+    } catch (err) {
+      onError(err instanceof ApiError ? err.message.toUpperCase() : "INGEST FAILED");
+    } finally {
+      setIngesting(false);
     }
   }
 
@@ -224,6 +242,21 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
               "PARSE"
             )}
           </button>
+          <button
+            onClick={handleIngest}
+            disabled={ingesting}
+            className="font-mono text-[10px] tracking-widest px-2 py-1 border rule hover:bg-[var(--leather)] hover:border-[var(--leather)] hover:text-[var(--paper)] disabled:opacity-40 transition-colors min-w-[3.25rem] flex items-center justify-center gap-1.5"
+            title="Merge sheets + BBGM ratings and save to DB"
+          >
+            {ingesting ? (
+              <>
+                <span className="spinner" />
+                <span>INGESTING</span>
+              </>
+            ) : (
+              "INGEST"
+            )}
+          </button>
           {!season.isCurrentSzn && (
             <button
               onClick={handleSetCurrent}
@@ -259,6 +292,38 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
           )}
         </div>
       </div>
+
+      {ingestResult && (
+        <div className="px-4 pb-3 border-t rule pt-2 font-mono text-[10px] tracking-widest flex flex-wrap items-baseline gap-x-4 gap-y-1">
+          <span className="text-[var(--leather)]">INGESTED</span>
+          <span>{ingestResult.inserted} FAs</span>
+          <span className="opacity-60">
+            · {ingestResult.ratingsAttached}/{ingestResult.inserted} with ratings
+          </span>
+          {ingestResult.unmatchedFromValuesSheet.length > 0 && (
+            <span
+              className="opacity-60"
+              title={ingestResult.unmatchedFromValuesSheet.join(", ")}
+            >
+              · {ingestResult.unmatchedFromValuesSheet.length} skipped (no values row)
+            </span>
+          )}
+          {ingestResult.unmatchedFromTeamSheet.length > 0 && (
+            <span
+              className="opacity-60"
+              title={ingestResult.unmatchedFromTeamSheet.join(", ")}
+            >
+              · {ingestResult.unmatchedFromTeamSheet.length} skipped (no team row)
+            </span>
+          )}
+          <button
+            onClick={() => setIngestResult(null)}
+            className="ml-auto opacity-60 hover:opacity-100"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* expanded panel */}
       {isExpanded && (

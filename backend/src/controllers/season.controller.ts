@@ -1,6 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import * as seasonService from "../services/season.service.js";
+import * as faService from "../services/fa.service.js";
 
 const createSchema = z.object({
   seasonNumber: z.coerce.number().int().positive(),
@@ -82,6 +83,37 @@ export async function createFromLink(
   try {
     const result = await seasonService.upsertSeasonFromLink(parsed.data);
     res.status(result.created ? 201 : 200).json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function ingestFAs(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const id = idParam.safeParse(req.params.id);
+  if (!id.success) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+  try {
+    const result = await faService.ingestFreeAgents(id.data);
+    res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function listCurrentSeasonFAs(
+  _req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const data = await faService.listFreeAgentsForCurrentSeason();
+    res.json(data);
   } catch (err) {
     next(err);
   }

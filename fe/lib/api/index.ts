@@ -53,6 +53,37 @@ export interface ParsedSheets {
   freeAgentValues: SheetRow[];
 }
 
+export interface FreeAgent {
+  id: number;
+  seasonId: number;
+  name: string;
+  position: string;
+  previousTeam: string;
+  capHold: string;
+  faStatus: "SIGNED" | "RFA" | "UFA" | "TBD";
+  age: number;
+  overall: number;
+  marketValue: number;
+  legacyValue: number;
+  playingTimeValue: number;
+  winningValue: number;
+  loyaltyValue: number;
+  moneyValue: number;
+  lengthValue: number;
+  ratings: Record<string, number | string | null> | null;
+  winningOfferId: number | null;
+}
+
+export interface IngestResult {
+  seasonId: number;
+  seasonNumber: number;
+  inserted: number;
+  matchedInBothSheets: number;
+  unmatchedFromTeamSheet: string[];
+  unmatchedFromValuesSheet: string[];
+  ratingsAttached: number;
+}
+
 // ---- Mod auth -------------------------------------------------------------
 export const mod = {
   async login(password: string): Promise<void> {
@@ -140,7 +171,25 @@ export const seasons = {
     });
   },
 
+  async ingestFAs(id: number): Promise<IngestResult> {
+    return request<IngestResult>(`/api/mod/seasons/${id}/ingest-fas`, {
+      method: "POST",
+    });
+  },
+
   async remove(id: number): Promise<void> {
     await request<{ ok: true }>(`/api/mod/seasons/${id}`, { method: "DELETE" });
+  },
+};
+
+// ---- Public (no auth) -----------------------------------------------------
+export const publicApi = {
+  async currentSeasonFAs(): Promise<{
+    season: Season | null;
+    freeAgents: FreeAgent[];
+  }> {
+    return request<{ season: Season | null; freeAgents: FreeAgent[] }>(
+      "/api/seasons/current/fas",
+    );
   },
 };

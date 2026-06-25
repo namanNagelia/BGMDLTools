@@ -1,0 +1,425 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import { ApiError, publicApi, type FreeAgent, type Season } from "@/lib/api";
+
+type SortKey =
+  | "name"
+  | "previousTeam"
+  | "position"
+  | "age"
+  | "overall"
+  | "capHold"
+  | "faStatus"
+  | "marketValue"
+  | "legacyValue"
+  | "playingTimeValue"
+  | "winningValue"
+  | "loyaltyValue"
+  | "moneyValue"
+  | "lengthValue";
+
+interface Column {
+  key: SortKey;
+  label: string;
+  align?: "right";
+  width?: string;
+}
+
+const COLUMNS: Column[] = [
+  { key: "name", label: "Player" },
+  { key: "previousTeam", label: "Team", width: "60px" },
+  { key: "position", label: "Pos", width: "50px" },
+  { key: "age", label: "Age", width: "50px", align: "right" },
+  { key: "overall", label: "Ovr", width: "50px", align: "right" },
+  { key: "capHold", label: "Cap Hold", width: "80px", align: "right" },
+  { key: "faStatus", label: "Status", width: "70px" },
+  { key: "marketValue", label: "MKT", width: "50px", align: "right" },
+  { key: "legacyValue", label: "LGC", width: "50px", align: "right" },
+  { key: "playingTimeValue", label: "PT", width: "50px", align: "right" },
+  { key: "winningValue", label: "WIN", width: "50px", align: "right" },
+  { key: "loyaltyValue", label: "LOY", width: "50px", align: "right" },
+  { key: "moneyValue", label: "MNY", width: "50px", align: "right" },
+  { key: "lengthValue", label: "LEN", width: "50px", align: "right" },
+];
+
+const PAGE_SIZE = 30;
+
+// rating fields we want to surface in the expand drawer
+const RATING_FIELDS = [
+  "ovr",
+  "pot",
+  "hgt",
+  "stre",
+  "spd",
+  "jmp",
+  "endu",
+  "ins",
+  "dnk",
+  "ft",
+  "fg",
+  "tp",
+  "oiq",
+  "diq",
+  "drb",
+  "pss",
+  "reb",
+];
+
+function compareFn(a: FreeAgent, b: FreeAgent, key: SortKey, dir: 1 | -1): number {
+  const av = a[key];
+  const bv = b[key];
+  if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+  return String(av ?? "").localeCompare(String(bv ?? "")) * dir;
+}
+
+export function RecruitmentBoard() {
+  const [data, setData] = useState<{ season: Season | null; freeAgents: FreeAgent[] }>({
+    season: null,
+    freeAgents: [],
+  });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const [query, setQuery] = useState("");
+  const [posFilter, setPosFilter] = useState<string>("ALL");
+  const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [teamFilter, setTeamFilter] = useState<string>("ALL");
+  const [sortKey, setSortKey] = useState<SortKey>("overall");
+  const [sortDir, setSortDir] = useState<1 | -1>(-1);
+  const [page, setPage] = useState(0);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    publicApi
+      .currentSeasonFAs()
+      .then((d) => {
+        if (alive) {
+          setData(d);
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (alive) {
+          setError(
+            err instanceof ApiError ? err.message.toUpperCase() : "LOAD FAILED",
+          );
+          setLoading(false);
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const positions = useMemo(
+    () =>
+      Array.from(new Set(data.freeAgents.map((f) => f.position).filter(Boolean))).sort(),
+    [data.freeAgents],
+  );
+  const teams = useMemo(
+    () =>
+      Array.from(new Set(data.freeAgents.map((f) => f.previousTeam).filter(Boolean))).sort(),
+    [data.freeAgents],
+  );
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return data.freeAgents.filter((f) => {
+      if (posFilter !== "ALL" && f.position !== posFilter) return false;
+      if (statusFilter !== "ALL" && f.faStatus !== statusFilter) return false;
+      if (teamFilter !== "ALL" && f.previousTeam !== teamFilter) return false;
+      if (q && !f.name.toLowerCase().includes(q)) return false;
+      return true;
+    });
+  }, [data.freeAgents, query, posFilter, statusFilter, teamFilter]);
+
+  const sorted = useMemo(
+    () => [...filtered].sort((a, b) => compareFn(a, b, sortKey, sortDir)),
+    [filtered, sortKey, sortDir],
+  );
+
+  const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const slice = sorted.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === 1 ? -1 : 1));
+    } else {
+      setSortKey(key);
+      setSortDir(typeof data.freeAgents[0]?.[key] === "number" ? -1 : 1);
+    }
+    setPage(0);
+  }
+
+  if (loading) {
+    return (
+      <div className="font-mono text-xs tracking-widest opacity-60 py-16 text-center">
+        OPENING DRAFT BOARD<span className="caret ml-1" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="border-l-2 border-[var(--leather)] pl-3 py-1 font-mono text-xs text-[var(--leather)]">
+        {error}
+      </div>
+    );
+  }
+
+  if (!data.season) {
+    return (
+      <div className="border-2 border-dashed border-[color:var(--rule-soft)] p-10 text-center font-mono text-xs tracking-widest opacity-70">
+        NO CURRENT SEASON ON FILE
+        <br />
+        <span className="opacity-50 mt-2 inline-block">
+          A MOD MUST INGEST FREE AGENTS FROM /MOD
+        </span>
+      </div>
+    );
+  }
+
+  if (data.freeAgents.length === 0) {
+    return (
+      <div className="border-2 border-dashed border-[color:var(--rule-soft)] p-10 text-center font-mono text-xs tracking-widest opacity-70">
+        SEASON {data.season.seasonNumber} HAS NO FREE AGENTS INGESTED YET
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* HEADER STRIP -------------------------------------------------- */}
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <div>
+          <div className="eyebrow opacity-60">RECRUITMENT BOARD</div>
+          <div className="display text-[12vw] sm:text-[6vw] leading-[0.85] mt-1">
+            FREE <span className="text-[var(--leather)]">AGENTS</span>
+            <span className="opacity-30"> · {data.season.seasonNumber}</span>
+          </div>
+        </div>
+        <div className="font-mono text-[10px] tracking-widest opacity-50 text-right">
+          {sorted.length} OF {data.freeAgents.length}
+          <br />
+          {data.freeAgents.filter((f) => f.faStatus === "UFA").length} UFA ·{" "}
+          {data.freeAgents.filter((f) => f.faStatus === "RFA").length} RFA
+        </div>
+      </div>
+
+      {/* FILTERS BAR --------------------------------------------------- */}
+      <div className="border rule grid grid-cols-1 sm:grid-cols-12 gap-2 p-3">
+        <input
+          type="search"
+          placeholder="SEARCH PLAYER NAME…"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setPage(0);
+          }}
+          className="sm:col-span-4 bg-transparent border rule px-3 py-2 outline-none font-mono text-xs tracking-widest focus:border-[var(--leather)] transition-colors"
+        />
+        <select
+          value={posFilter}
+          onChange={(e) => {
+            setPosFilter(e.target.value);
+            setPage(0);
+          }}
+          className="sm:col-span-2 bg-transparent border rule px-3 py-2 outline-none font-mono text-xs tracking-widest focus:border-[var(--leather)] transition-colors"
+        >
+          <option value="ALL">ALL POSITIONS</option>
+          {positions.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+        <select
+          value={teamFilter}
+          onChange={(e) => {
+            setTeamFilter(e.target.value);
+            setPage(0);
+          }}
+          className="sm:col-span-3 bg-transparent border rule px-3 py-2 outline-none font-mono text-xs tracking-widest focus:border-[var(--leather)] transition-colors"
+        >
+          <option value="ALL">ALL TEAMS</option>
+          {teams.map((t) => (
+            <option key={t} value={t}>
+              {t}
+            </option>
+          ))}
+        </select>
+        <select
+          value={statusFilter}
+          onChange={(e) => {
+            setStatusFilter(e.target.value);
+            setPage(0);
+          }}
+          className="sm:col-span-3 bg-transparent border rule px-3 py-2 outline-none font-mono text-xs tracking-widest focus:border-[var(--leather)] transition-colors"
+        >
+          <option value="ALL">ALL STATUS</option>
+          {["UFA", "RFA", "SIGNED", "TBD"].map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* TABLE --------------------------------------------------------- */}
+      <div className="border rule overflow-x-auto">
+        <table className="w-full font-mono text-xs">
+          <thead>
+            <tr className="border-b rule bg-[color:var(--ink-2)]">
+              {COLUMNS.map((c) => {
+                const active = sortKey === c.key;
+                return (
+                  <th
+                    key={c.key}
+                    style={c.width ? { width: c.width } : undefined}
+                    className={`px-3 py-2 tracking-widest text-[10px] whitespace-nowrap cursor-pointer hover:text-[var(--leather)] transition-colors select-none ${
+                      c.align === "right" ? "text-right" : "text-left"
+                    } ${active ? "" : "opacity-70"}`}
+                    onClick={() => toggleSort(c.key)}
+                  >
+                    {c.label.toUpperCase()}
+                    {active && (
+                      <span className="ml-1 text-[var(--leather)]">
+                        {sortDir === 1 ? "↑" : "↓"}
+                      </span>
+                    )}
+                  </th>
+                );
+              })}
+              <th className="w-6" />
+            </tr>
+          </thead>
+          <tbody>
+            {slice.map((f) => {
+              const open = expandedId === f.id;
+              return (
+                <>
+                  <tr
+                    key={f.id}
+                    className="border-b rule hover:bg-[color:var(--ink-2)] cursor-pointer transition-colors"
+                    onClick={() => setExpandedId(open ? null : f.id)}
+                  >
+                    <td className="px-3 py-1.5 whitespace-nowrap">{f.name}</td>
+                    <td className="px-3 py-1.5 whitespace-nowrap opacity-80">
+                      {f.previousTeam}
+                    </td>
+                    <td className="px-3 py-1.5 whitespace-nowrap opacity-80">
+                      {f.position}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">{f.age}</td>
+                    <td className="px-3 py-1.5 text-right tabular-nums font-bold">
+                      {f.overall}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {Number(f.capHold).toFixed(2)}M
+                    </td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">
+                      <span
+                        className={`px-1.5 py-0.5 border text-[9px] ${
+                          f.faStatus === "RFA"
+                            ? "border-[var(--mustard)] text-[var(--mustard)]"
+                            : f.faStatus === "SIGNED"
+                              ? "border-[var(--leather)] text-[var(--leather)]"
+                              : f.faStatus === "TBD"
+                                ? "rule opacity-50"
+                                : "rule opacity-90"
+                        }`}
+                      >
+                        {f.faStatus}
+                      </span>
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {f.marketValue}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {f.legacyValue}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {f.playingTimeValue}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {f.winningValue}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {f.loyaltyValue}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {f.moneyValue}
+                    </td>
+                    <td className="px-3 py-1.5 text-right tabular-nums">
+                      {f.lengthValue}
+                    </td>
+                    <td className="px-3 py-1.5 text-right opacity-50">
+                      {open ? "▾" : "▸"}
+                    </td>
+                  </tr>
+                  {open && (
+                    <tr className="border-b rule bg-[color:var(--ink-2)]">
+                      <td colSpan={COLUMNS.length + 1} className="p-4">
+                        <div className="eyebrow opacity-70 mb-3">
+                          BBGM RATINGS · {data.season?.seasonNumber}
+                        </div>
+                        {f.ratings ? (
+                          <div className="grid grid-cols-3 sm:grid-cols-6 lg:grid-cols-9 gap-2">
+                            {RATING_FIELDS.map((k) => {
+                              const v = (f.ratings as Record<string, number | null>)?.[k];
+                              return (
+                                <div key={k} className="border rule px-2 py-1.5">
+                                  <div className="text-[9px] tracking-widest opacity-60">
+                                    {k.toUpperCase()}
+                                  </div>
+                                  <div className="text-sm tabular-nums">
+                                    {v ?? "—"}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="font-mono text-[10px] tracking-widest opacity-50">
+                            NO RATINGS AVAILABLE
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )}
+                </>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* PAGINATION ---------------------------------------------------- */}
+      {pageCount > 1 && (
+        <div className="flex items-center justify-between gap-3 font-mono text-[10px] tracking-widest">
+          <button
+            onClick={() => setPage((p) => Math.max(0, p - 1))}
+            disabled={safePage === 0}
+            className="px-3 py-1.5 border rule hover:bg-[var(--leather)] hover:border-[var(--leather)] hover:text-[var(--paper)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            ← PREV
+          </button>
+          <div className="opacity-70">
+            PAGE {safePage + 1} / {pageCount} · SHOWING{" "}
+            {safePage * PAGE_SIZE + 1}–{Math.min((safePage + 1) * PAGE_SIZE, sorted.length)}
+          </div>
+          <button
+            onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+            disabled={safePage >= pageCount - 1}
+            className="px-3 py-1.5 border rule hover:bg-[var(--leather)] hover:border-[var(--leather)] hover:text-[var(--paper)] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+          >
+            NEXT →
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
