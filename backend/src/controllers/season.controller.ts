@@ -11,6 +11,7 @@ const createSchema = z.object({
 const updateSchema = z.object({
   seasonNumber: z.coerce.number().int().positive().optional(),
   leagueLink: z.url().optional(),
+  sheetsLink: z.union([z.url(), z.null()]).optional(),
 });
 
 const fromLinkSchema = z.object({
@@ -81,6 +82,24 @@ export async function createFromLink(
   try {
     const result = await seasonService.upsertSeasonFromLink(parsed.data);
     res.status(result.created ? 201 : 200).json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function parseSheets(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const id = idParam.safeParse(req.params.id);
+  if (!id.success) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+  try {
+    const data = await seasonService.parseSeasonSheets(id.data);
+    res.json(data);
   } catch (err) {
     next(err);
   }

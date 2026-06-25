@@ -1,4 +1,44 @@
-import PublicGoogleSheetsParser from "public-google-sheets-parser";
+import { createRequire } from "node:module";
+import { getFreeAgentTeamSheetName, getValuesSheetName } from "../constants.js";
 
-//parse and add FA's and values
-//Parse and Add team values TBD
+//Load and add all FAs, figure out how to load and add all team values
+
+const require = createRequire(import.meta.url);
+const PublicGoogleSheetsParser = require("public-google-sheets-parser") as new (
+  spreadsheetId: string,
+  option?: { sheetName?: string; sheetId?: string; useFormat?: boolean },
+) => {
+  parse(): Promise<unknown[]>;
+  setOption(option: {
+    sheetName?: string;
+    sheetId?: string;
+    useFormat?: boolean;
+  }): void;
+};
+
+/**
+ * Extract the spreadsheet ID from a full Google Sheets URL.
+ *   https://docs.google.com/spreadsheets/d/<ID>/edit?gid=...
+ */
+function extractSpreadsheetId(sheetLink: string): string {
+  const match = sheetLink.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+  if (!match) throw new Error("Could not extract spreadsheet ID from link");
+  return match[1];
+}
+
+export async function loadFreeAgentData(season: string, sheetLink: string) {
+  const spreadsheetId = extractSpreadsheetId(sheetLink);
+
+  const teamSheetName = getFreeAgentTeamSheetName(season);
+  const valuesSheetName = getValuesSheetName(season);
+
+  const parser = new PublicGoogleSheetsParser(spreadsheetId, {
+    sheetName: teamSheetName,
+  });
+  const freeAgentsByTeam = await parser.parse();
+
+  parser.setOption({ sheetName: valuesSheetName });
+  const freeAgentValues = await parser.parse();
+
+  return { freeAgentsByTeam, freeAgentValues };
+}

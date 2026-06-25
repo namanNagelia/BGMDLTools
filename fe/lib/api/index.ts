@@ -40,7 +40,17 @@ export interface Season {
   id: number;
   seasonNumber: number;
   leagueLink: string;
+  sheetsLink: string | null;
   isCurrentSzn: boolean;
+}
+
+export interface SheetRow {
+  [columnName: string]: string | number | boolean | null;
+}
+
+export interface ParsedSheets {
+  freeAgentsByTeam: SheetRow[];
+  freeAgentValues: SheetRow[];
 }
 
 // ---- Mod auth -------------------------------------------------------------
@@ -111,13 +121,23 @@ export const seasons = {
 
   async update(
     id: number,
-    patch: { seasonNumber?: number; leagueLink?: string },
+    patch: {
+      seasonNumber?: number;
+      leagueLink?: string;
+      sheetsLink?: string | null;
+    },
   ): Promise<Season> {
     const res = await request<{ season: Season }>(`/api/mod/seasons/${id}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
     });
     return res.season;
+  },
+
+  async parseSheets(id: number): Promise<ParsedSheets> {
+    return request<ParsedSheets>(`/api/mod/seasons/${id}/parse-sheets`, {
+      method: "POST",
+    });
   },
 
   async remove(id: number): Promise<void> {

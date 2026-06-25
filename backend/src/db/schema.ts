@@ -13,6 +13,7 @@ export const seasons = pgTable("seasons", {
   id: serial("id").primaryKey(),
   seasonNumber: integer("season_number").notNull(),
   leagueLink: text("league_link").notNull(),
+  sheetsLink: text("sheets_link"),
   isCurrentSzn: boolean("is_current_szn").default(false).notNull(),
 });
 

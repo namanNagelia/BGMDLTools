@@ -1,0 +1,346 @@
+"use client";
+
+import { useState } from "react";
+import {
+  ApiError,
+  mod,
+  seasons as seasonsApi,
+  type ParsedSheets,
+  type Season,
+} from "@/lib/api";
+import { JsonViewer } from "./JsonViewer";
+import { SheetTable } from "./SheetTable";
+
+type Mode = "json" | "sheets" | null;
+
+interface JsonState {
+  loading: boolean;
+  data?: unknown;
+  error?: string;
+}
+
+interface SheetsState {
+  loading: boolean;
+  data?: ParsedSheets;
+  error?: string;
+}
+
+interface Props {
+  season: Season;
+  onChanged: () => Promise<void> | void;
+  onError: (msg: string) => void;
+}
+
+export function SeasonRow({ season, onChanged, onError }: Props) {
+  const [mode, setMode] = useState<Mode>(null);
+  const [jsonState, setJsonState] = useState<JsonState>({ loading: false });
+  const [sheetsState, setSheetsState] = useState<SheetsState>({ loading: false });
+
+  // sheets-link inline editor
+  const [editingSheets, setEditingSheets] = useState(false);
+  const [sheetsDraft, setSheetsDraft] = useState(season.sheetsLink ?? "");
+  const [savingSheets, setSavingSheets] = useState(false);
+
+  // delete confirm
+  const [confirmDel, setConfirmDel] = useState(false);
+
+  async function handlePullJson() {
+    setMode("json");
+    setJsonState({ loading: true });
+    try {
+      const res = await mod.fetchLeague(season.leagueLink);
+      setJsonState({ loading: false, data: res.data });
+    } catch (err) {
+      setJsonState({
+        loading: false,
+        error: err instanceof ApiError ? err.message.toUpperCase() : "FETCH FAILED",
+      });
+    }
+  }
+
+  async function handleParseSheets() {
+    if (!season.sheetsLink) {
+      setEditingSheets(true);
+      onError("ADD A SHEETS LINK FIRST");
+      return;
+    }
+    setMode("sheets");
+    setSheetsState({ loading: true });
+    try {
+      const data = await seasonsApi.parseSheets(season.id);
+      setSheetsState({ loading: false, data });
+    } catch (err) {
+      setSheetsState({
+        loading: false,
+        error: err instanceof ApiError ? err.message.toUpperCase() : "PARSE FAILED",
+      });
+    }
+  }
+
+  async function handleSaveSheets() {
+    setSavingSheets(true);
+    try {
+      await seasonsApi.update(season.id, {
+        sheetsLink: sheetsDraft.trim() || null,
+      });
+      setEditingSheets(false);
+      await onChanged();
+    } catch (err) {
+      onError(err instanceof ApiError ? err.message.toUpperCase() : "SAVE FAILED");
+    } finally {
+      setSavingSheets(false);
+    }
+  }
+
+  async function handleSetCurrent() {
+    try {
+      await seasonsApi.setCurrent(season.id);
+      await onChanged();
+    } catch (err) {
+      onError(err instanceof ApiError ? err.message.toUpperCase() : "FAILED");
+    }
+  }
+
+  async function handleDelete() {
+    try {
+      await seasonsApi.remove(season.id);
+      setConfirmDel(false);
+      await onChanged();
+    } catch (err) {
+      onError(err instanceof ApiError ? err.message.toUpperCase() : "DELETE FAILED");
+    }
+  }
+
+  const isExpanded =
+    (mode === "json" && (jsonState.loading || jsonState.data !== undefined || jsonState.error)) ||
+    (mode === "sheets" &&
+      (sheetsState.loading || sheetsState.data !== undefined || sheetsState.error));
+
+  return (
+    <div
+      className={`border-b rule last:border-b-0 ${
+        season.isCurrentSzn ? "bg-[color:var(--ink-2)]" : ""
+      }`}
+    >
+      {/* main row */}
+      <div className="grid grid-cols-12 gap-3 px-4 py-3 items-start">
+        <div className="col-span-2 display text-3xl leading-none pt-1">
+          {season.seasonNumber}
+        </div>
+
+        <div className="col-span-6 space-y-1 min-w-0">
+          <div className="font-mono text-[11px] truncate opacity-80" title={season.leagueLink}>
+            <span className="opacity-50">json: </span>
+            {season.leagueLink}
+          </div>
+
+          {editingSheets ? (
+            <div className="flex gap-2">
+              <input
+                type="url"
+                autoFocus
+                value={sheetsDraft}
+                onChange={(e) => setSheetsDraft(e.target.value)}
+                placeholder="https://docs.google.com/spreadsheets/d/..."
+                className="flex-1 bg-transparent border rule px-2 py-1 outline-none font-mono text-[11px] focus:border-[var(--leather)] transition-colors"
+              />
+              <button
+                onClick={handleSaveSheets}
+                disabled={savingSheets}
+                className="font-mono text-[10px] tracking-widest px-2 py-1 bg-[var(--leather)] text-[var(--paper)] hover:bg-[var(--leather-2)] disabled:opacity-40 transition-colors min-w-[3.5rem] flex items-center justify-center"
+              >
+                {savingSheets ? <span className="spinner" /> : "SAVE"}
+              </button>
+              <button
+                onClick={() => {
+                  setEditingSheets(false);
+                  setSheetsDraft(season.sheetsLink ?? "");
+                }}
+                className="font-mono text-[10px] tracking-widest px-2 py-1 border rule opacity-70 hover:opacity-100 transition-opacity"
+              >
+                ✕
+              </button>
+            </div>
+          ) : season.sheetsLink ? (
+            <div className="font-mono text-[11px] truncate opacity-80 flex items-baseline gap-2" title={season.sheetsLink}>
+              <span className="opacity-50 shrink-0">sheets:</span>
+              <span className="truncate">{season.sheetsLink}</span>
+              <button
+                onClick={() => setEditingSheets(true)}
+                className="font-mono text-[9px] tracking-widest opacity-50 hover:opacity-100 hover:text-[var(--leather)] shrink-0"
+              >
+                EDIT
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setEditingSheets(true)}
+              className="font-mono text-[10px] tracking-widest opacity-50 hover:opacity-100 hover:text-[var(--leather)] transition-colors"
+            >
+              + ADD SHEETS LINK
+            </button>
+          )}
+        </div>
+
+        <div className="col-span-2 font-mono text-[10px] tracking-widest pt-1">
+          {season.isCurrentSzn ? (
+            <span className="inline-flex items-center gap-2 text-[var(--leather)]">
+              <span className="w-2 h-2 rounded-full bg-[var(--leather)] animate-pulse" />
+              CURRENT
+            </span>
+          ) : (
+            <span className="opacity-50">ARCHIVED</span>
+          )}
+        </div>
+
+        <div className="col-span-2 flex flex-wrap items-center justify-end gap-1 pt-1">
+          <button
+            onClick={handlePullJson}
+            disabled={jsonState.loading}
+            className="font-mono text-[10px] tracking-widest px-2 py-1 border rule hover:bg-[var(--leather)] hover:border-[var(--leather)] hover:text-[var(--paper)] disabled:opacity-40 transition-colors min-w-[3.25rem] flex items-center justify-center gap-1.5"
+            title="Pull league JSON"
+          >
+            {jsonState.loading ? (
+              <>
+                <span className="spinner" />
+                <span>PULLING</span>
+              </>
+            ) : (
+              "PULL"
+            )}
+          </button>
+          <button
+            onClick={handleParseSheets}
+            disabled={sheetsState.loading}
+            className="font-mono text-[10px] tracking-widest px-2 py-1 border rule hover:bg-[var(--leather)] hover:border-[var(--leather)] hover:text-[var(--paper)] disabled:opacity-40 transition-colors min-w-[3.25rem] flex items-center justify-center gap-1.5"
+            title="Parse Google Sheet"
+          >
+            {sheetsState.loading ? (
+              <>
+                <span className="spinner" />
+                <span>PARSING</span>
+              </>
+            ) : (
+              "PARSE"
+            )}
+          </button>
+          {!season.isCurrentSzn && (
+            <button
+              onClick={handleSetCurrent}
+              className="font-mono text-[10px] tracking-widest px-2 py-1 border rule hover:bg-[var(--mustard)] hover:border-[var(--mustard)] hover:text-[var(--ink)] transition-colors"
+              title="Mark as current"
+            >
+              MARK
+            </button>
+          )}
+          {confirmDel ? (
+            <>
+              <button
+                onClick={handleDelete}
+                className="font-mono text-[10px] tracking-widest px-2 py-1 bg-[var(--leather)] text-[var(--paper)] hover:bg-[var(--leather-2)] transition-colors"
+              >
+                CONFIRM
+              </button>
+              <button
+                onClick={() => setConfirmDel(false)}
+                className="font-mono text-[10px] tracking-widest px-2 py-1 border rule opacity-70 hover:opacity-100 transition-opacity"
+              >
+                ✕
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setConfirmDel(true)}
+              className="font-mono text-[10px] tracking-widest px-2 py-1 border rule hover:border-[var(--leather)] hover:text-[var(--leather)] transition-colors"
+              title="Delete season"
+            >
+              DEL
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* expanded panel */}
+      {isExpanded && (
+        <div className="px-4 pb-4 border-t rule pt-3 bg-[color:var(--ink)] space-y-4">
+          {/* mode switcher */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex gap-1 font-mono text-[10px] tracking-widest">
+              <button
+                onClick={() => setMode("json")}
+                className={`px-2 py-1 border rule transition-colors ${
+                  mode === "json"
+                    ? "bg-[var(--leather)] border-[var(--leather)] text-[var(--paper)]"
+                    : "opacity-60 hover:opacity-100"
+                }`}
+                disabled={jsonState.data === undefined && jsonState.error === undefined}
+              >
+                JSON
+              </button>
+              <button
+                onClick={() => setMode("sheets")}
+                className={`px-2 py-1 border rule transition-colors ${
+                  mode === "sheets"
+                    ? "bg-[var(--leather)] border-[var(--leather)] text-[var(--paper)]"
+                    : "opacity-60 hover:opacity-100"
+                }`}
+                disabled={sheetsState.data === undefined && sheetsState.error === undefined}
+              >
+                SHEETS
+              </button>
+            </div>
+            <button
+              onClick={() => setMode(null)}
+              className="font-mono text-[10px] tracking-widest opacity-60 hover:opacity-100"
+            >
+              ↑ COLLAPSE
+            </button>
+          </div>
+
+          {mode === "json" && (
+            <>
+              {jsonState.loading && (
+                <div className="font-mono text-xs opacity-60 py-4">
+                  PULLING JSON<span className="caret ml-1" />
+                </div>
+              )}
+              {jsonState.error && (
+                <div className="border-l-2 border-[var(--leather)] pl-3 py-1 font-mono text-xs text-[var(--leather)]">
+                  {jsonState.error}
+                </div>
+              )}
+              {jsonState.data !== undefined && <JsonViewer value={jsonState.data} />}
+            </>
+          )}
+
+          {mode === "sheets" && (
+            <>
+              {sheetsState.loading && (
+                <div className="font-mono text-xs opacity-60 py-4">
+                  PARSING SHEETS<span className="caret ml-1" />
+                </div>
+              )}
+              {sheetsState.error && (
+                <div className="border-l-2 border-[var(--leather)] pl-3 py-1 font-mono text-xs text-[var(--leather)]">
+                  {sheetsState.error}
+                </div>
+              )}
+              {sheetsState.data && (
+                <div className="space-y-5">
+                  <SheetTable
+                    title="Free Agents by Team"
+                    rows={sheetsState.data.freeAgentsByTeam}
+                  />
+                  <SheetTable
+                    title="Free Agent Values"
+                    rows={sheetsState.data.freeAgentValues}
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

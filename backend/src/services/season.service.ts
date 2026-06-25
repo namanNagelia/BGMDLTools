@@ -2,6 +2,7 @@ import { eq, desc, ne, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { seasons } from "../db/schema.js";
 import { extractSeasonNumber, fetchLeagueJson, LeagueFetchError } from "./league.service.js";
+import { loadFreeAgentData } from "./sheets.service.js";
 
 export type Season = typeof seasons.$inferSelect;
 
@@ -68,7 +69,7 @@ export async function setCurrentSeason(id: number): Promise<Season | null> {
 
 export async function updateSeason(
   id: number,
-  patch: { seasonNumber?: number; leagueLink?: string },
+  patch: { seasonNumber?: number; leagueLink?: string; sheetsLink?: string | null },
 ): Promise<Season | null> {
   const [row] = await db
     .update(seasons)
@@ -76,6 +77,13 @@ export async function updateSeason(
     .where(eq(seasons.id, id))
     .returning();
   return row ?? null;
+}
+
+export async function parseSeasonSheets(id: number) {
+  const [row] = await db.select().from(seasons).where(eq(seasons.id, id)).limit(1);
+  if (!row) throw new LeagueFetchError("Season not found", 404);
+  if (!row.sheetsLink) throw new LeagueFetchError("No sheets link saved on this season", 400);
+  return loadFreeAgentData(String(row.seasonNumber), row.sheetsLink);
 }
 
 export async function deleteSeason(id: number): Promise<boolean> {

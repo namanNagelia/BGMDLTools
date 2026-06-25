@@ -41,9 +41,7 @@ export default function ModPage() {
               className={`inline-block w-2 h-2 rounded-full ${
                 auth === "mod"
                   ? "bg-[var(--leather)] animate-pulse"
-                  : auth === "checking"
-                    ? "bg-[var(--mustard)]"
-                    : "bg-[color:rgba(243,237,225,0.3)]"
+                  : "bg-[color:rgba(243,237,225,0.3)]"
               }`}
             />
             {auth === "mod" ? "AUTHED" : auth === "checking" ? "SYNCING" : "LOCKED"}
@@ -51,7 +49,7 @@ export default function ModPage() {
           {auth === "mod" && (
             <button
               onClick={handleLogout}
-              className="border rule px-3 py-1 hover:bg-[var(--leather)] hover:border-[var(--leather)] transition-colors"
+              className="border rule px-3 py-1 hover:bg-[var(--paper)] hover:text-[var(--ink)] transition-colors"
             >
               END SESSION
             </button>

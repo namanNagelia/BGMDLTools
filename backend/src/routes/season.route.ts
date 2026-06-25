@@ -11,6 +11,7 @@ router.post("/", controller.create);
 router.post("/from-link", controller.createFromLink);
 router.patch("/:id", controller.update);
 router.post("/:id/current", controller.setCurrent);
+router.post("/:id/parse-sheets", controller.parseSheets);
 router.delete("/:id", controller.remove);
 
 export default router;

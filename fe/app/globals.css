@@ -9,14 +9,15 @@
   --paper-2: #ebe3d2;
   --ink: #0b0b0c;
   --ink-2: #1d1d1f;
-  --rule: rgba(11, 11, 12, 0.85);
-  --rule-soft: rgba(11, 11, 12, 0.15);
+  --rule: rgba(243, 237, 225, 0.9);
+  --rule-soft: rgba(243, 237, 225, 0.2);
   --leather: #e6451f;
   --leather-2: #c93914;
   --mustard: #d9a637;
 
-  --background: var(--paper);
-  --foreground: var(--ink);
+  /* default theme: ink bg, paper text */
+  --background: var(--ink);
+  --foreground: var(--paper);
 }
 
 @theme inline {
@@ -59,21 +60,16 @@ body {
   text-rendering: optimizeLegibility;
 }
 
-/* paper grain — barely-there noise so the cream doesn't feel flat */
+/* barely-there grain so the dark doesn't feel flat */
 .grain::before {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 1;
-  opacity: 0.06;
-  mix-blend-mode: multiply;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
-}
-
-.ops .grain::before {
-  mix-blend-mode: screen;
   opacity: 0.05;
+  mix-blend-mode: screen;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
 }
 
 /* typographic primitives ----------------------------------------------------- */
@@ -145,4 +141,21 @@ body {
   width: 0.6ch;
   background: currentColor;
   animation: blink 1s steps(1) infinite;
+}
+
+/* tiny rotating ring for inline button loading states */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spinner {
+  display: inline-block;
+  width: 0.9em;
+  height: 0.9em;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: -0.15em;
 }
