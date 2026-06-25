@@ -51,6 +51,7 @@ export interface SheetRow {
 export interface ParsedSheets {
   freeAgentsByTeam: SheetRow[];
   freeAgentValues: SheetRow[];
+  ranks: ParsedRanks & { error?: string };
 }
 
 export interface FreeAgent {
@@ -74,6 +75,31 @@ export interface FreeAgent {
   winningOfferId: number | null;
 }
 
+export interface MarketEntry {
+  tier: number;
+  abbrev: string;
+  name: string;
+}
+export interface LegacyEntry {
+  tier: number;
+  abbrev: string;
+  name: string;
+  titles: number;
+  finals: number;
+  playoffPct: number | null;
+}
+export interface WinningEntry {
+  rank: number;
+  city: string;
+  abbrev: string;
+  postseason: "CHAMPION" | "FINALS" | "CF" | null;
+}
+export interface ParsedRanks {
+  market: MarketEntry[];
+  legacy: LegacyEntry[];
+  winning: WinningEntry[];
+}
+
 export interface IngestResult {
   seasonId: number;
   seasonNumber: number;
@@ -82,6 +108,44 @@ export interface IngestResult {
   unmatchedFromTeamSheet: string[];
   unmatchedFromValuesSheet: string[];
   ratingsAttached: number;
+  ranks: {
+    market: number;
+    legacy: number;
+    winning: number;
+    unresolved: number;
+    error?: string;
+  };
+}
+
+export interface MarketRankRow {
+  id: number;
+  seasonId: number;
+  teamAbbrev: string;
+  teamName: string;
+  rank: number;
+}
+export interface LegacyRankRow {
+  id: number;
+  seasonId: number;
+  teamAbbrev: string;
+  teamName: string;
+  tier: number;
+  titles: number;
+  finals: number;
+  playoffPct: string | null;
+}
+export interface WinningRankRow {
+  id: number;
+  seasonId: number;
+  teamAbbrev: string;
+  teamCity: string;
+  rank: number;
+  postseason: "CHAMPION" | "FINALS" | "CF" | null;
+}
+export interface CurrentSeasonRanks {
+  market: Record<string, MarketRankRow>;
+  legacy: Record<string, LegacyRankRow>;
+  winning: Record<string, WinningRankRow>;
 }
 
 // ---- Mod auth -------------------------------------------------------------
@@ -187,9 +251,12 @@ export const publicApi = {
   async currentSeasonFAs(): Promise<{
     season: Season | null;
     freeAgents: FreeAgent[];
+    ranks: CurrentSeasonRanks;
   }> {
-    return request<{ season: Season | null; freeAgents: FreeAgent[] }>(
-      "/api/seasons/current/fas",
-    );
+    return request<{
+      season: Season | null;
+      freeAgents: FreeAgent[];
+      ranks: CurrentSeasonRanks;
+    }>("/api/seasons/current/fas");
   },
 };

@@ -11,6 +11,7 @@ import {
 } from "@/lib/api";
 import { JsonViewer } from "./JsonViewer";
 import { SheetTable } from "./SheetTable";
+import { RanksTriptych } from "./RanksTriptych";
 
 type Mode = "json" | "sheets" | null;
 
@@ -84,11 +85,27 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
 
   async function handleSaveSheets() {
     setSavingSheets(true);
+    setIngestResult(null);
     try {
-      await seasonsApi.update(season.id, {
-        sheetsLink: sheetsDraft.trim() || null,
-      });
+      const trimmed = sheetsDraft.trim();
+      await seasonsApi.update(season.id, { sheetsLink: trimmed || null });
       setEditingSheets(false);
+
+      // auto-ingest if a real link is set
+      if (trimmed) {
+        setIngesting(true);
+        try {
+          const result = await seasonsApi.ingestFAs(season.id);
+          setIngestResult(result);
+        } catch (err) {
+          onError(
+            err instanceof ApiError ? err.message.toUpperCase() : "INGEST FAILED",
+          );
+        } finally {
+          setIngesting(false);
+        }
+      }
+
       await onChanged();
     } catch (err) {
       onError(err instanceof ApiError ? err.message.toUpperCase() : "SAVE FAILED");
@@ -164,10 +181,18 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
               />
               <button
                 onClick={handleSaveSheets}
-                disabled={savingSheets}
-                className="font-mono text-[10px] tracking-widest px-2 py-1 bg-[var(--leather)] text-[var(--paper)] hover:bg-[var(--leather-2)] disabled:opacity-40 transition-colors min-w-[3.5rem] flex items-center justify-center"
+                disabled={savingSheets || ingesting}
+                title="Save link + auto-ingest"
+                className="font-mono text-[10px] tracking-widest px-2 py-1 bg-[var(--leather)] text-[var(--paper)] hover:bg-[var(--leather-2)] disabled:opacity-40 transition-colors min-w-[6rem] flex items-center justify-center gap-1.5"
               >
-                {savingSheets ? <span className="spinner" /> : "SAVE"}
+                {savingSheets || ingesting ? (
+                  <>
+                    <span className="spinner" />
+                    <span>{ingesting ? "INGESTING" : "SAVING"}</span>
+                  </>
+                ) : (
+                  "SAVE + INGEST"
+                )}
               </button>
               <button
                 onClick={() => {
@@ -400,6 +425,7 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
                     title="Free Agent Values"
                     rows={sheetsState.data.freeAgentValues}
                   />
+                  <RanksTriptych ranks={sheetsState.data.ranks} />
                 </div>
               )}
             </>

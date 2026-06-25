@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, publicApi, type FreeAgent, type Season } from "@/lib/api";
+import {
+  ApiError,
+  publicApi,
+  type CurrentSeasonRanks,
+  type FreeAgent,
+  type Season,
+} from "@/lib/api";
+import { TeamCard } from "./TeamCard";
+
+const TEAM_STORAGE_KEY = "gmTeamAbbrev";
 
 type SortKey =
   | "name"
@@ -74,21 +83,46 @@ function compareFn(a: FreeAgent, b: FreeAgent, key: SortKey, dir: 1 | -1): numbe
 }
 
 export function RecruitmentBoard() {
-  const [data, setData] = useState<{ season: Season | null; freeAgents: FreeAgent[] }>({
+  const [data, setData] = useState<{
+    season: Season | null;
+    freeAgents: FreeAgent[];
+    ranks: CurrentSeasonRanks;
+  }>({
     season: null,
     freeAgents: [],
+    ranks: { market: {}, legacy: {}, winning: {} },
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [gmTeam, setGmTeam] = useState<string>("");
 
   const [query, setQuery] = useState("");
   const [posFilter, setPosFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [teamFilter, setTeamFilter] = useState<string>("ALL");
+  const [matchMarket, setMatchMarket] = useState(false);
+  const [matchLegacy, setMatchLegacy] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("overall");
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
   const [page, setPage] = useState(0);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+
+  // hydrate gmTeam from localStorage on mount
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const stored = window.localStorage.getItem(TEAM_STORAGE_KEY);
+      if (stored) setGmTeam(stored);
+    }
+  }, []);
+
+  function pickTeam(abbrev: string) {
+    setGmTeam(abbrev);
+    if (typeof window !== "undefined") {
+      if (abbrev) window.localStorage.setItem(TEAM_STORAGE_KEY, abbrev);
+      else window.localStorage.removeItem(TEAM_STORAGE_KEY);
+    }
+  }
 
   useEffect(() => {
     let alive = true;
@@ -124,16 +158,55 @@ export function RecruitmentBoard() {
     [data.freeAgents],
   );
 
+  // canonical team list from market ranks (full names + abbrevs)
+  const teamRoster = useMemo(() => {
+    const fromMarket = Object.values(data.ranks.market).map((m) => ({
+      abbrev: m.teamAbbrev,
+      name: m.teamName,
+    }));
+    if (fromMarket.length > 0) {
+      return fromMarket.sort((a, b) => a.name.localeCompare(b.name));
+    }
+    // fallback: pull abbrevs out of FA previousTeam set
+    return teams.map((t) => ({ abbrev: t, name: t }));
+  }, [data.ranks.market, teams]);
+
+  // your team's market rank / legacy tier (used for highlight + match filters)
+  const myMarketRank = gmTeam ? data.ranks.market[gmTeam]?.rank ?? null : null;
+  const myLegacyTier = gmTeam ? data.ranks.legacy[gmTeam]?.tier ?? null : null;
+
+  // clear the match toggles if the user un-picks their team
+  useEffect(() => {
+    if (!gmTeam) {
+      setMatchMarket(false);
+      setMatchLegacy(false);
+    }
+  }, [gmTeam]);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return data.freeAgents.filter((f) => {
       if (posFilter !== "ALL" && f.position !== posFilter) return false;
       if (statusFilter !== "ALL" && f.faStatus !== statusFilter) return false;
       if (teamFilter !== "ALL" && f.previousTeam !== teamFilter) return false;
+      if (matchMarket && myMarketRank != null && f.marketValue !== myMarketRank)
+        return false;
+      if (matchLegacy && myLegacyTier != null && f.legacyValue !== myLegacyTier)
+        return false;
       if (q && !f.name.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [data.freeAgents, query, posFilter, statusFilter, teamFilter]);
+  }, [
+    data.freeAgents,
+    query,
+    posFilter,
+    statusFilter,
+    teamFilter,
+    matchMarket,
+    matchLegacy,
+    myMarketRank,
+    myLegacyTier,
+  ]);
 
   const sorted = useMemo(
     () => [...filtered].sort((a, b) => compareFn(a, b, sortKey, sortDir)),
@@ -201,13 +274,31 @@ export function RecruitmentBoard() {
             <span className="opacity-30"> · {data.season.seasonNumber}</span>
           </div>
         </div>
-        <div className="font-mono text-[10px] tracking-widest opacity-50 text-right">
-          {sorted.length} OF {data.freeAgents.length}
-          <br />
-          {data.freeAgents.filter((f) => f.faStatus === "UFA").length} UFA ·{" "}
-          {data.freeAgents.filter((f) => f.faStatus === "RFA").length} RFA
+        <div className="flex items-center gap-3 font-mono text-[10px] tracking-widest">
+          <span className="opacity-60">YOUR TEAM</span>
+          <select
+            value={gmTeam}
+            onChange={(e) => pickTeam(e.target.value)}
+            className="bg-transparent border rule px-3 py-2 outline-none font-mono text-xs tracking-widest focus:border-[var(--leather)] transition-colors min-w-[14rem]"
+          >
+            <option value="">— CHOOSE YOUR TEAM —</option>
+            {teamRoster.map((t) => (
+              <option key={t.abbrev} value={t.abbrev}>
+                {t.abbrev} · {t.name}
+              </option>
+            ))}
+          </select>
+          <div className="opacity-50 text-right hidden sm:block">
+            {sorted.length} OF {data.freeAgents.length}
+            <br />
+            {data.freeAgents.filter((f) => f.faStatus === "UFA").length} UFA ·{" "}
+            {data.freeAgents.filter((f) => f.faStatus === "RFA").length} RFA
+          </div>
         </div>
       </div>
+
+      {/* TEAM CARD --------------------------------------------------- */}
+      {gmTeam && <TeamCard abbrev={gmTeam} ranks={data.ranks} />}
 
       {/* FILTERS BAR --------------------------------------------------- */}
       <div className="border rule grid grid-cols-1 sm:grid-cols-12 gap-2 p-3">
@@ -266,6 +357,43 @@ export function RecruitmentBoard() {
             </option>
           ))}
         </select>
+
+        {gmTeam && (myMarketRank != null || myLegacyTier != null) && (
+          <div className="sm:col-span-12 border-t rule pt-2 mt-1 flex flex-wrap items-center gap-4 font-mono text-[10px] tracking-widest">
+            <span className="opacity-60">FIT FILTER ({gmTeam}):</span>
+            {myMarketRank != null && (
+              <label className="flex items-center gap-2 cursor-pointer select-none hover:opacity-100">
+                <input
+                  type="checkbox"
+                  checked={matchMarket}
+                  onChange={(e) => {
+                    setMatchMarket(e.target.checked);
+                    setPage(0);
+                  }}
+                  className="accent-[var(--leather)] w-4 h-4"
+                />
+                MKT = {myMarketRank}
+              </label>
+            )}
+            {myLegacyTier != null && (
+              <label className="flex items-center gap-2 cursor-pointer select-none hover:opacity-100">
+                <input
+                  type="checkbox"
+                  checked={matchLegacy}
+                  onChange={(e) => {
+                    setMatchLegacy(e.target.checked);
+                    setPage(0);
+                  }}
+                  className="accent-[var(--leather)] w-4 h-4"
+                />
+                LGC = {myLegacyTier}
+              </label>
+            )}
+            <span className="opacity-50">
+              · MATCHING CELLS ARE HIGHLIGHTED IN ORANGE
+            </span>
+          </div>
+        )}
       </div>
 
       {/* TABLE --------------------------------------------------------- */}
@@ -335,10 +463,22 @@ export function RecruitmentBoard() {
                         {f.faStatus}
                       </span>
                     </td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">
+                    <td
+                      className={`px-3 py-1.5 text-right tabular-nums ${
+                        myMarketRank != null && f.marketValue === myMarketRank
+                          ? "text-[var(--leather)] font-bold"
+                          : ""
+                      }`}
+                    >
                       {f.marketValue}
                     </td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">
+                    <td
+                      className={`px-3 py-1.5 text-right tabular-nums ${
+                        myLegacyTier != null && f.legacyValue === myLegacyTier
+                          ? "text-[var(--leather)] font-bold"
+                          : ""
+                      }`}
+                    >
                       {f.legacyValue}
                     </td>
                     <td className="px-3 py-1.5 text-right tabular-nums">

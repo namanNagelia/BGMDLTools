@@ -1,8 +1,16 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { freeAgents, seasons } from "../db/schema.js";
+import {
+  freeAgents,
+  legacyRanks,
+  marketRanks,
+  seasons,
+  winningRanks,
+} from "../db/schema.js";
 import { fetchLeagueJson, LeagueFetchError } from "./league.service.js";
 import { loadFreeAgentData } from "./sheets.service.js";
+import { loadSeasonRanks } from "./rank.service.js";
+import { getSeasonRanksSheetName } from "../constants.js";
 
 type FaStatus = "SIGNED" | "RFA" | "UFA" | "TBD";
 
@@ -91,6 +99,13 @@ export interface IngestResult {
   unmatchedFromTeamSheet: string[];
   unmatchedFromValuesSheet: string[];
   ratingsAttached: number;
+  ranks: {
+    market: number;
+    legacy: number;
+    winning: number;
+    unresolved: number;
+    error?: string;
+  };
 }
 
 export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> {
@@ -103,9 +118,20 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
   if (!season.sheetsLink)
     throw new LeagueFetchError("No sheets link saved on this season", 400);
 
-  const [{ freeAgentsByTeam, freeAgentValues }, bbgm] = await Promise.all([
-    loadFreeAgentData(String(season.seasonNumber), season.sheetsLink),
+  const seasonStr = String(season.seasonNumber);
+  const ranksSheetName = getSeasonRanksSheetName(seasonStr);
+
+  const [{ freeAgentsByTeam, freeAgentValues }, bbgm, ranks] = await Promise.all([
+    loadFreeAgentData(seasonStr, season.sheetsLink),
     fetchLeagueJson(season.leagueLink),
+    loadSeasonRanks(season.sheetsLink, ranksSheetName).catch((err) => {
+      return {
+        market: [],
+        legacy: [],
+        winning: [],
+        error: err instanceof Error ? err.message : "rank parse failed",
+      } as Awaited<ReturnType<typeof loadSeasonRanks>> & { error?: string };
+    }),
   ]);
 
   const teamByName = new Map<string, TeamRow>();
@@ -159,10 +185,48 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     if (!teamByName.has(key)) unmatchedFromTeam.push(v.Name ?? key);
   }
 
-  // replace existing FAs for this season (idempotent re-ingest)
+  // shape rank rows for replace-insert
+  const marketRows = ranks.market.map((m) => ({
+    seasonId: season.id,
+    teamAbbrev: m.abbrev,
+    teamName: m.name,
+    rank: m.tier,
+  }));
+  const legacyRows = ranks.legacy
+    .filter((r) => r.abbrev !== "?")
+    .map((r) => ({
+      seasonId: season.id,
+      teamAbbrev: r.abbrev,
+      teamName: r.name,
+      tier: r.tier,
+      titles: r.titles,
+      finals: r.finals,
+      playoffPct: r.playoffPct != null ? String(r.playoffPct) : null,
+    }));
+  const winningRows = ranks.winning
+    .filter((w) => w.abbrev !== "?")
+    .map((w) => ({
+      seasonId: season.id,
+      teamAbbrev: w.abbrev,
+      teamCity: w.city,
+      rank: w.rank,
+      postseason: w.postseason,
+    }));
+  const ranksUnresolved =
+    ranks.legacy.filter((r) => r.abbrev === "?").length +
+    ranks.winning.filter((w) => w.abbrev === "?").length;
+
+  // replace existing FAs + ranks for this season (idempotent re-ingest)
   await db.transaction(async (tx) => {
     await tx.delete(freeAgents).where(eq(freeAgents.seasonId, season.id));
     if (rowsToInsert.length) await tx.insert(freeAgents).values(rowsToInsert);
+
+    await tx.delete(marketRanks).where(eq(marketRanks.seasonId, season.id));
+    await tx.delete(legacyRanks).where(eq(legacyRanks.seasonId, season.id));
+    await tx.delete(winningRanks).where(eq(winningRanks.seasonId, season.id));
+    if (marketRows.length) await tx.insert(marketRanks).values(marketRows);
+    if (legacyRows.length) await tx.insert(legacyRanks).values(legacyRows);
+    if (winningRows.length) await tx.insert(winningRanks).values(winningRows);
   });
 
   return {
@@ -173,6 +237,13 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     unmatchedFromTeamSheet: unmatchedFromTeam,
     unmatchedFromValuesSheet: unmatchedFromValues,
     ratingsAttached,
+    ranks: {
+      market: marketRows.length,
+      legacy: legacyRows.length,
+      winning: winningRows.length,
+      unresolved: ranksUnresolved,
+      error: "error" in ranks ? (ranks as { error?: string }).error : undefined,
+    },
   };
 }
 
@@ -186,7 +257,28 @@ export async function listFreeAgentsForCurrentSeason() {
     .from(seasons)
     .where(eq(seasons.isCurrentSzn, true))
     .limit(1);
-  if (!current) return { season: null, freeAgents: [] };
-  const rows = await listFreeAgentsForSeason(current.id);
-  return { season: current, freeAgents: rows };
+  if (!current) {
+    return {
+      season: null,
+      freeAgents: [],
+      ranks: { market: {}, legacy: {}, winning: {} },
+    };
+  }
+
+  const [rows, market, legacy, winning] = await Promise.all([
+    listFreeAgentsForSeason(current.id),
+    db.select().from(marketRanks).where(eq(marketRanks.seasonId, current.id)),
+    db.select().from(legacyRanks).where(eq(legacyRanks.seasonId, current.id)),
+    db.select().from(winningRanks).where(eq(winningRanks.seasonId, current.id)),
+  ]);
+
+  return {
+    season: current,
+    freeAgents: rows,
+    ranks: {
+      market: Object.fromEntries(market.map((m) => [m.teamAbbrev, m])),
+      legacy: Object.fromEntries(legacy.map((l) => [l.teamAbbrev, l])),
+      winning: Object.fromEntries(winning.map((w) => [w.teamAbbrev, w])),
+    },
+  };
 }

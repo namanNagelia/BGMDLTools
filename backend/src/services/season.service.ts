@@ -3,6 +3,8 @@ import { db } from "../db/client.js";
 import { seasons } from "../db/schema.js";
 import { extractSeasonNumber, fetchLeagueJson, LeagueFetchError } from "./league.service.js";
 import { loadFreeAgentData } from "./sheets.service.js";
+import { loadSeasonRanks } from "./rank.service.js";
+import { getSeasonRanksSheetName } from "../constants.js";
 
 export type Season = typeof seasons.$inferSelect;
 
@@ -82,8 +84,26 @@ export async function updateSeason(
 export async function parseSeasonSheets(id: number) {
   const [row] = await db.select().from(seasons).where(eq(seasons.id, id)).limit(1);
   if (!row) throw new LeagueFetchError("Season not found", 404);
-  if (!row.sheetsLink) throw new LeagueFetchError("No sheets link saved on this season", 400);
-  return loadFreeAgentData(String(row.seasonNumber), row.sheetsLink);
+  if (!row.sheetsLink)
+    throw new LeagueFetchError("No sheets link saved on this season", 400);
+
+  const seasonStr = String(row.seasonNumber);
+  const [fas, ranks] = await Promise.all([
+    loadFreeAgentData(seasonStr, row.sheetsLink),
+    loadSeasonRanks(row.sheetsLink, getSeasonRanksSheetName(seasonStr)).catch(
+      (err) => {
+        // ranks tab is optional — return empty + error info instead of failing the whole parse
+        return {
+          market: [],
+          legacy: [],
+          winning: [],
+          error: err instanceof Error ? err.message : "rank parse failed",
+        };
+      },
+    ),
+  ]);
+
+  return { ...fas, ranks };
 }
 
 export async function deleteSeason(id: number): Promise<boolean> {

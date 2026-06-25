@@ -45,6 +45,40 @@ export const freeAgents = pgTable("free_agents", {
   ),
 });
 
+export const marketRanks = pgTable("market_ranks", {
+  id: serial("id").primaryKey(),
+  seasonId: integer("season_id")
+    .references(() => seasons.id, { onDelete: "cascade" })
+    .notNull(),
+  teamAbbrev: text("team_abbrev").notNull(),
+  teamName: text("team_name").notNull(),
+  rank: integer("rank").notNull(),
+});
+
+export const legacyRanks = pgTable("legacy_ranks", {
+  id: serial("id").primaryKey(),
+  seasonId: integer("season_id")
+    .references(() => seasons.id, { onDelete: "cascade" })
+    .notNull(),
+  teamAbbrev: text("team_abbrev").notNull(),
+  teamName: text("team_name").notNull(),
+  tier: integer("tier").notNull(),
+  titles: integer("titles").notNull(),
+  finals: integer("finals").notNull(),
+  playoffPct: decimal("playoff_pct", { precision: 6, scale: 2 }),
+});
+
+export const winningRanks = pgTable("winning_ranks", {
+  id: serial("id").primaryKey(),
+  seasonId: integer("season_id")
+    .references(() => seasons.id, { onDelete: "cascade" })
+    .notNull(),
+  teamAbbrev: text("team_abbrev").notNull(),
+  teamCity: text("team_city").notNull(),
+  rank: integer("rank").notNull(),
+  postseason: text("postseason"), // CHAMPION | FINALS | CF | null
+});
+
 export const offers = pgTable("offers", {
   id: serial("id").primaryKey(),
   freeAgentId: integer("free_agent_id")
