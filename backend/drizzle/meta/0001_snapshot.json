@@ -1,0 +1,293 @@
+{
+  "id": "a475baf2-797a-494c-a027-073b1811befc",
+  "prevId": "40b6c61b-de2b-42f4-b7ba-b203651c301d",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.free_agents": {
+      "name": "free_agents",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position": {
+          "name": "position",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "previous_team": {
+          "name": "previous_team",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "cap_hold": {
+          "name": "cap_hold",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "fa_status": {
+          "name": "fa_status",
+          "type": "fa_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "season_id": {
+          "name": "season_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "age": {
+          "name": "age",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "overall": {
+          "name": "overall",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "market_value": {
+          "name": "market_value",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "legacy_value": {
+          "name": "legacy_value",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "playing_time_value": {
+          "name": "playing_time_value",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "winning_value": {
+          "name": "winning_value",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "loyalty_value": {
+          "name": "loyalty_value",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "money_value": {
+          "name": "money_value",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "length_value": {
+          "name": "length_value",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "winning_offer_id": {
+          "name": "winning_offer_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "free_agents_season_id_seasons_id_fk": {
+          "name": "free_agents_season_id_seasons_id_fk",
+          "tableFrom": "free_agents",
+          "tableTo": "seasons",
+          "columnsFrom": [
+            "season_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "free_agents_winning_offer_id_offers_id_fk": {
+          "name": "free_agents_winning_offer_id_offers_id_fk",
+          "tableFrom": "free_agents",
+          "tableTo": "offers",
+          "columnsFrom": [
+            "winning_offer_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.offers": {
+      "name": "offers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "free_agent_id": {
+          "name": "free_agent_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "team_name": {
+          "name": "team_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "offer_amount": {
+          "name": "offer_amount",
+          "type": "numeric(10, 2)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "offer_length": {
+          "name": "offer_length",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "offer_season": {
+          "name": "offer_season",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "offer_gm": {
+          "name": "offer_gm",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "offers_free_agent_id_free_agents_id_fk": {
+          "name": "offers_free_agent_id_free_agents_id_fk",
+          "tableFrom": "offers",
+          "tableTo": "free_agents",
+          "columnsFrom": [
+            "free_agent_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "offers_offer_season_seasons_id_fk": {
+          "name": "offers_offer_season_seasons_id_fk",
+          "tableFrom": "offers",
+          "tableTo": "seasons",
+          "columnsFrom": [
+            "offer_season"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.seasons": {
+      "name": "seasons",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "season_number": {
+          "name": "season_number",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "league_link": {
+          "name": "league_link",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "is_current_szn": {
+          "name": "is_current_szn",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.fa_status": {
+      "name": "fa_status",
+      "schema": "public",
+      "values": [
+        "SIGNED",
+        "RFA",
+        "UFA",
+        "TBD"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}
