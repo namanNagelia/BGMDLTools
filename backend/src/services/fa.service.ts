@@ -50,15 +50,26 @@ const parseStatus = (s: unknown): FaStatus => {
   return "TBD";
 };
 
+interface PlayerIndexEntry {
+  ratings: Record<string, unknown> | null;
+  /** All season-stat rows for this player, oldest → newest. */
+  stats: Array<{ season: number; tid: number }>;
+}
+
 /**
- * Build a map of normalized player name → ratings entry for `seasonNumber`.
- * BBGM player.ratings is an array of per-season rating snapshots.
+ * Build a per-player index keyed by normalized full name. Includes:
+ *  - the ratings snapshot for `seasonNumber`
+ *  - all per-season stat rows (used to compute years-on-previous-team)
+ *
+ * BBGM stores ratings AND stats as arrays of per-season records. A player
+ * may have multiple stats rows per season (regular + playoffs); we collapse
+ * to one row per (season, tid) pair so consecutive-team counts are correct.
  */
-function buildRatingsIndex(
+function buildPlayerIndex(
   bbgm: unknown,
   seasonNumber: number,
-): Map<string, Record<string, unknown>> {
-  const map = new Map<string, Record<string, unknown>>();
+): Map<string, PlayerIndexEntry> {
+  const map = new Map<string, PlayerIndexEntry>();
   if (!bbgm || typeof bbgm !== "object") return map;
   const players = (bbgm as { players?: unknown }).players;
   if (!Array.isArray(players)) return map;
@@ -70,24 +81,80 @@ function buildRatingsIndex(
       firstName?: string;
       lastName?: string;
       ratings?: unknown;
+      stats?: unknown;
     };
     const fullName =
       player.name && typeof player.name === "string"
         ? player.name
         : `${player.firstName ?? ""} ${player.lastName ?? ""}`.trim();
     if (!fullName) continue;
-    if (!Array.isArray(player.ratings)) continue;
 
-    const ratingsArr = player.ratings as Array<{ season?: number }>;
-    // exact season match first, fall back to latest <= seasonNumber, fall back to last
-    let pick = ratingsArr.find((r) => r?.season === seasonNumber);
-    if (!pick) {
-      const candidates = ratingsArr.filter(
-        (r) => typeof r?.season === "number" && r.season! <= seasonNumber,
-      );
-      pick = candidates.length ? candidates[candidates.length - 1] : ratingsArr[ratingsArr.length - 1];
+    // ratings snapshot for the requested season (fallback to latest <= season)
+    let ratings: Record<string, unknown> | null = null;
+    if (Array.isArray(player.ratings)) {
+      const arr = player.ratings as Array<{ season?: number }>;
+      let pick = arr.find((r) => r?.season === seasonNumber);
+      if (!pick) {
+        const candidates = arr.filter(
+          (r) => typeof r?.season === "number" && r.season! <= seasonNumber,
+        );
+        pick = candidates.length
+          ? candidates[candidates.length - 1]
+          : arr[arr.length - 1];
+      }
+      ratings = pick ?? null;
     }
-    if (pick) map.set(normName(fullName), pick);
+
+    // dedupe stats by (season, tid)
+    const seenKeys = new Set<string>();
+    const stats: Array<{ season: number; tid: number }> = [];
+    if (Array.isArray(player.stats)) {
+      for (const s of player.stats as Array<{ season?: number; tid?: number }>) {
+        if (typeof s?.season !== "number" || typeof s?.tid !== "number") continue;
+        const k = `${s.season}|${s.tid}`;
+        if (seenKeys.has(k)) continue;
+        seenKeys.add(k);
+        stats.push({ season: s.season, tid: s.tid });
+      }
+      stats.sort((a, b) => a.season - b.season);
+    }
+
+    map.set(normName(fullName), { ratings, stats });
+  }
+  return map;
+}
+
+/**
+ * Walk a player's per-season stats backward from `priorSeason` (= seasonNumber - 1)
+ * counting how many consecutive seasons they were on `tid`.
+ * Returns 0 if they were never on that tid (shouldn't happen for a real FA).
+ */
+function consecutiveYearsOnTeam(
+  stats: Array<{ season: number; tid: number }>,
+  tid: number,
+  priorSeason: number,
+): number {
+  if (!stats.length) return 0;
+  let count = 0;
+  // walk newest → oldest, only seasons <= priorSeason
+  for (let i = stats.length - 1; i >= 0; i--) {
+    const row = stats[i];
+    if (row.season > priorSeason) continue;
+    if (row.tid === tid) count++;
+    else if (count > 0) break; // a different team breaks the streak
+  }
+  return count;
+}
+
+function buildAbbrevToTid(bbgm: unknown): Map<string, number> {
+  const map = new Map<string, number>();
+  if (!bbgm || typeof bbgm !== "object") return map;
+  const teams = (bbgm as { teams?: unknown }).teams;
+  if (!Array.isArray(teams)) return map;
+  for (const t of teams as Array<{ tid?: number; abbrev?: string }>) {
+    if (typeof t?.tid === "number" && t.tid >= 0 && t.abbrev) {
+      map.set(t.abbrev, t.tid);
+    }
   }
   return map;
 }
@@ -246,12 +313,14 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     if (r?.Name) valueByName.set(normName(r.Name), r);
   }
 
-  const ratingsIndex = buildRatingsIndex(bbgm, season.seasonNumber);
+  const playerIndex = buildPlayerIndex(bbgm, season.seasonNumber);
+  const abbrevToTid = buildAbbrevToTid(bbgm);
 
   // join: only players present in both sheets get inserted (we need columns from each)
   const rowsToInsert: (typeof freeAgents.$inferInsert)[] = [];
   const unmatchedFromValues: string[] = [];
   let ratingsAttached = 0;
+  let loyaltyYearsAttached = 0;
 
   for (const [key, team] of teamByName) {
     const value = valueByName.get(key);
@@ -259,14 +328,31 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
       unmatchedFromValues.push(team.Name ?? key);
       continue;
     }
-    const ratings = ratingsIndex.get(key) ?? null;
+    const idxEntry = playerIndex.get(key);
+    const ratings = idxEntry?.ratings ?? null;
     if (ratings) ratingsAttached++;
+
+    // loyalty: count consecutive recent seasons the player was on previousTeam
+    const prevAbbrev = String(team.Team ?? "").trim();
+    const prevTid = prevAbbrev ? abbrevToTid.get(prevAbbrev) : undefined;
+    let yearsOnPreviousTeam = 1;
+    if (idxEntry && prevTid != null) {
+      const years = consecutiveYearsOnTeam(
+        idxEntry.stats,
+        prevTid,
+        season.seasonNumber - 1,
+      );
+      if (years > 0) {
+        yearsOnPreviousTeam = years;
+        loyaltyYearsAttached++;
+      }
+    }
 
     rowsToInsert.push({
       seasonId: season.id,
       name: team.Name!,
       position: String(value.Pos ?? "").trim() || "?",
-      previousTeam: String(team.Team ?? "").trim() || "FA",
+      previousTeam: prevAbbrev || "FA",
       capHold: String(num(team["CAP HOLD (IN MILLIONS)"])),
       faStatus: parseStatus(team["FA Status"]),
       age: num(value.Age),
@@ -278,9 +364,11 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
       loyaltyValue: num(value["LOYALTY (x1.3)"]),
       moneyValue: num(value["MONEY (x2)"]),
       lengthValue: num(value["LENGTH (x1.4)"]),
+      yearsOnPreviousTeam,
       ratings,
     });
   }
+  void loyaltyYearsAttached; // reserved for future ingest-summary surfacing
 
   const unmatchedFromTeam: string[] = [];
   for (const [key, v] of valueByName) {

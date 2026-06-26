@@ -41,6 +41,7 @@ export const freeAgents = pgTable("free_agents", {
   moneyValue: integer("money_value").notNull(),
   lengthValue: integer("length_value").notNull(),
   wave: integer("wave").default(1).notNull(),
+  yearsOnPreviousTeam: integer("years_on_previous_team").default(1).notNull(),
   ratings: jsonb("ratings"),
   renounced: boolean("renounced").default(false).notNull(),
   winningOfferId: integer("winning_offer_id").references(
@@ -114,6 +115,7 @@ export const offers = pgTable("offers", {
     .references(() => seasons.id, { onDelete: "cascade" })
     .notNull(),
   offerGm: text("offer_gm").notNull(),
+  codeWord: text("code_word"),
   status: offerStatusEnum("status").default("PENDING").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

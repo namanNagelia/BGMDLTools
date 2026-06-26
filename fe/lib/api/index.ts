@@ -73,6 +73,7 @@ export interface OfferWithFlags {
   offerLength: number;
   offerSeason: number;
   offerGm: string;
+  codeWord: string | null;
   status: "PENDING" | "ACCEPTED" | "REJECTED" | "WITHDRAWN";
   createdAt: string;
   invalidReasons: string[];
@@ -225,7 +226,76 @@ export const mod = {
       method: "POST",
     });
   },
+
+  async acceptOffer(id: number): Promise<{
+    accepted: OfferWithFlags;
+    faId: number;
+    rejectedIds: number[];
+  }> {
+    return request(`/api/mod/offers/${id}/accept`, { method: "POST" });
+  },
+
+  async calcFA(faId: number): Promise<CalcResult> {
+    return request<CalcResult>(`/api/mod/free-agents/${faId}/calc`);
+  },
 };
+
+// FA calc types ------------------------------------------------------------
+export interface CalcValueLine {
+  key:
+    | "market"
+    | "legacy"
+    | "playingTime"
+    | "winning"
+    | "loyalty"
+    | "money"
+    | "length";
+  playerValue: number;
+  baseMultiplier: number;
+  effectiveMultiplier: number;
+  won: boolean;
+  points: number;
+  note?: string;
+}
+
+export interface CalcOfferScore {
+  offerId: number;
+  teamAbbrev: string;
+  gm: string;
+  amount: number;
+  years: number;
+  totalMoney: number;
+  values: CalcValueLine[];
+  total: number;
+}
+
+export interface CalcResult {
+  player: {
+    id: number;
+    name: string;
+    position: string;
+    overall: number;
+    faStatus: string;
+    previousTeam: string;
+    values: {
+      market: number;
+      legacy: number;
+      playingTime: number;
+      winning: number;
+      loyalty: number;
+      money: number;
+      length: number;
+    };
+  };
+  rounds: Array<{
+    round: number;
+    teams: CalcOfferScore[];
+    eliminatedAbbrev?: string;
+    eliminatedTotal?: number;
+  }>;
+  preFilter: Array<{ offerId: number; teamAbbrev: string; reason: string }>;
+  winner: { abbrev: string; offerId: number; total: number } | null;
+}
 
 // ---- Seasons --------------------------------------------------------------
 export const seasons = {
@@ -332,7 +402,13 @@ export const publicApi = {
 
   async submitOffer(
     faId: number,
-    input: { teamAbbrev: string; gm: string; amount: number; years: number },
+    input: {
+      teamAbbrev: string;
+      gm: string;
+      codeWord?: string;
+      amount: number;
+      years: number;
+    },
   ): Promise<{ offer: OfferWithFlags; invalidReasons: string[] }> {
     return request<{ offer: OfferWithFlags; invalidReasons: string[] }>(
       `/api/free-agents/${faId}/offers`,

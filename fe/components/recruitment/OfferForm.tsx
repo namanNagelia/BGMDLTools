@@ -14,6 +14,7 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
   const [amount, setAmount] = useState("");
   const [years, setYears] = useState("");
   const [gm, setGm] = useState("");
+  const [codeWord, setCodeWord] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submittedOk, setSubmittedOk] = useState(false);
@@ -23,11 +24,13 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
   const [hardViolations, setHardViolations] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
 
-  // remember GM name across the session
+  // remember GM name + code word across the session
   useEffect(() => {
     if (typeof window !== "undefined") {
-      const stored = window.localStorage.getItem("gmName");
-      if (stored) setGm(stored);
+      const storedName = window.localStorage.getItem("gmName");
+      if (storedName) setGm(storedName);
+      const storedCode = window.localStorage.getItem("gmCodeWord");
+      if (storedCode) setCodeWord(storedCode);
     }
   }, []);
 
@@ -82,11 +85,14 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
       await publicApi.submitOffer(faId, {
         teamAbbrev,
         gm: gm.trim() || "anon",
+        codeWord: codeWord.trim() || undefined,
         amount: amt,
         years: yrs,
       });
-      if (typeof window !== "undefined" && gm.trim()) {
-        window.localStorage.setItem("gmName", gm.trim());
+      if (typeof window !== "undefined") {
+        if (gm.trim()) window.localStorage.setItem("gmName", gm.trim());
+        if (codeWord.trim())
+          window.localStorage.setItem("gmCodeWord", codeWord.trim());
       }
       setAmount("");
       setYears("");
@@ -121,9 +127,9 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
       ) : (
         <>
           <form onSubmit={handleSubmit} className="grid grid-cols-12 gap-2 items-end">
-            <label className="col-span-4 sm:col-span-3">
+            <label className="col-span-6 sm:col-span-2">
               <div className="font-mono text-[9px] tracking-widest opacity-60 mb-0.5">
-                AMOUNT ($M/YR)
+                $M / YR
               </div>
               <input
                 type="number"
@@ -137,9 +143,9 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
                 className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm tabular-nums focus:border-[var(--leather)] transition-colors"
               />
             </label>
-            <label className="col-span-3 sm:col-span-2">
+            <label className="col-span-6 sm:col-span-1">
               <div className="font-mono text-[9px] tracking-widest opacity-60 mb-0.5">
-                YEARS
+                YRS
               </div>
               <input
                 type="number"
@@ -153,15 +159,28 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
                 className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm tabular-nums focus:border-[var(--leather)] transition-colors"
               />
             </label>
-            <label className="col-span-5 sm:col-span-4">
+            <label className="col-span-6 sm:col-span-3">
               <div className="font-mono text-[9px] tracking-widest opacity-60 mb-0.5">
-                YOUR GM NAME
+                GM NAME
               </div>
               <input
                 type="text"
                 value={gm}
                 onChange={(e) => setGm(e.target.value)}
                 placeholder="(remembered)"
+                className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm focus:border-[var(--leather)] transition-colors"
+              />
+            </label>
+            <label className="col-span-6 sm:col-span-3">
+              <div className="font-mono text-[9px] tracking-widest opacity-60 mb-0.5">
+                CODE WORD
+              </div>
+              <input
+                type="text"
+                value={codeWord}
+                onChange={(e) => setCodeWord(e.target.value)}
+                placeholder="for mod ID"
+                title="A passphrase mods know is yours — used to verify the offer came from you."
                 className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm focus:border-[var(--leather)] transition-colors"
               />
             </label>

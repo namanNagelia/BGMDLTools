@@ -8,6 +8,7 @@ const idParam = z.coerce.number().int().positive();
 const createSchema = z.object({
   teamAbbrev: z.string().min(1).max(8),
   gm: z.string().min(1).max(64),
+  codeWord: z.string().max(64).optional(),
   amount: z.coerce.number().positive(),
   years: z.coerce.number().int().positive(),
 });
@@ -77,6 +78,28 @@ export async function listAllForMod(
   try {
     const rows = await offerService.listAllOffersForCurrentSeason();
     res.json({ offers: rows });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function modAccept(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const id = idParam.safeParse(req.params.id);
+  if (!id.success) {
+    res.status(400).json({ error: "invalid_id" });
+    return;
+  }
+  try {
+    const result = await offerService.modAcceptOffer(id.data);
+    if (!result) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    res.json(result);
   } catch (err) {
     next(err);
   }

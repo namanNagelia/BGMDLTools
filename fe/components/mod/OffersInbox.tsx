@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { ApiError, mod, type OfferWithFlags } from "@/lib/api";
+import { CalcModal } from "./CalcModal";
 
 export function OffersInbox() {
   const [rows, setRows] = useState<OfferWithFlags[]>([]);
@@ -22,6 +23,8 @@ export function OffersInbox() {
 
   const [withdrawingId, setWithdrawingId] = useState<number | null>(null);
   const [confirmId, setConfirmId] = useState<number | null>(null);
+  const [calcFaId, setCalcFaId] = useState<number | null>(null);
+  const [query, setQuery] = useState("");
 
   async function handleWithdraw(id: number) {
     setWithdrawingId(id);
@@ -50,7 +53,26 @@ export function OffersInbox() {
     list.push(r);
     byPlayer.set(r.freeAgentId, list);
   }
-  const groups = Array.from(byPlayer.entries()).sort((a, b) => b[1].length - a[1].length);
+  const allGroups = Array.from(byPlayer.entries()).sort(
+    (a, b) => b[1].length - a[1].length,
+  );
+
+  // filter by player name, previous team, GM name, or team abbrev
+  const q = query.trim().toLowerCase();
+  const groups = q
+    ? allGroups.filter(([, faOffers]) => {
+        const sample = faOffers[0];
+        return (
+          (sample.playerName ?? "").toLowerCase().includes(q) ||
+          (sample.playerPreviousTeam ?? "").toLowerCase().includes(q) ||
+          faOffers.some(
+            (o) =>
+              o.teamAbbrev.toLowerCase().includes(q) ||
+              o.offerGm.toLowerCase().includes(q),
+          )
+        );
+      })
+    : allGroups;
 
   return (
     <div>
@@ -70,7 +92,19 @@ export function OffersInbox() {
         </div>
       </div>
 
-      <div className="flex items-center gap-3 mb-3">
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <input
+          type="search"
+          placeholder="SEARCH PLAYER · TEAM · GM…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="flex-1 min-w-[200px] bg-transparent border rule px-3 py-1 outline-none font-mono text-xs tracking-widest focus:border-[var(--leather)] transition-colors"
+        />
+        {q && (
+          <div className="font-mono text-[10px] tracking-widest opacity-60">
+            {groups.length} OF {allGroups.length} PLAYERS
+          </div>
+        )}
         <button
           onClick={refresh}
           disabled={loading}
@@ -90,6 +124,10 @@ export function OffersInbox() {
         <div className="border-2 border-dashed border-[color:var(--rule-soft)] py-12 text-center font-mono text-xs tracking-widest opacity-60">
           NO PENDING OFFERS
         </div>
+      ) : groups.length === 0 ? (
+        <div className="border-2 border-dashed border-[color:var(--rule-soft)] py-12 text-center font-mono text-xs tracking-widest opacity-60">
+          NO MATCHES FOR &quot;{query}&quot;
+        </div>
       ) : (
         <div className="space-y-4">
           {groups.map(([faId, faOffers]) => {
@@ -97,14 +135,21 @@ export function OffersInbox() {
             const prev = faOffers[0].playerPreviousTeam;
             return (
               <div key={faId} className="border rule">
-                <div className="border-b rule px-3 py-2 bg-[color:var(--ink-2)] flex items-baseline justify-between">
+                <div className="border-b rule px-3 py-2 bg-[color:var(--ink-2)] flex items-baseline justify-between flex-wrap gap-2">
                   <div className="font-mono text-sm">
                     <span className="opacity-60">{prev} · </span>
                     <span className="font-bold">{name}</span>
+                    <span className="opacity-60 ml-2">
+                      · {faOffers.length} OFFER
+                      {faOffers.length === 1 ? "" : "S"}
+                    </span>
                   </div>
-                  <div className="font-mono text-[10px] tracking-widest opacity-60">
-                    {faOffers.length} OFFER{faOffers.length === 1 ? "" : "S"}
-                  </div>
+                  <button
+                    onClick={() => setCalcFaId(faId)}
+                    className="font-mono text-[10px] tracking-widest px-3 py-1 bg-[var(--leather)] text-[var(--paper)] hover:bg-[var(--leather-2)] transition-colors"
+                  >
+                    CALC & RESOLVE
+                  </button>
                 </div>
                 <table className="w-full font-mono text-xs">
                   <thead>
@@ -133,7 +178,17 @@ export function OffersInbox() {
                             }`}
                           >
                             <td className="px-3 py-1.5 font-bold">{o.teamAbbrev}</td>
-                            <td className="px-3 py-1.5 opacity-80">{o.offerGm}</td>
+                            <td className="px-3 py-1.5 opacity-80">
+                              <div>{o.offerGm}</div>
+                              {o.codeWord && (
+                                <div
+                                  className="text-[9px] tracking-widest text-[var(--mustard)] font-bold"
+                                  title="Code word the GM submitted"
+                                >
+                                  ⌬ {o.codeWord}
+                                </div>
+                              )}
+                            </td>
                             <td className="px-3 py-1.5 text-right tabular-nums">
                               ${Number(o.offerAmount).toFixed(1)}M
                             </td>
@@ -190,6 +245,16 @@ export function OffersInbox() {
             );
           })}
         </div>
+      )}
+
+      {calcFaId !== null && (
+        <CalcModal
+          faId={calcFaId}
+          onClose={() => setCalcFaId(null)}
+          onResolved={() => {
+            void refresh();
+          }}
+        />
       )}
     </div>
   );

@@ -259,6 +259,7 @@ export async function createOffer(input: {
   amount: number;
   years: number;
   gm: string;
+  codeWord?: string;
 }): Promise<{ offer: Offer; invalidReasons: string[] }> {
   const [fa] = await db
     .select()
@@ -280,6 +281,7 @@ export async function createOffer(input: {
       offerLength: input.years,
       offerSeason: fa.seasonId,
       offerGm: input.gm,
+      codeWord: input.codeWord?.trim() || null,
     })
     .returning();
 
@@ -395,4 +397,47 @@ export async function modWithdrawOffer(id: number): Promise<boolean> {
   if (!row) return false;
   await db.update(offers).set({ status: "WITHDRAWN" }).where(eq(offers.id, id));
   return true;
+}
+
+/**
+ * Mod accepts an offer → FA gets signed, every other pending offer on that FA
+ * is rejected. Done in a single transaction.
+ */
+export async function modAcceptOffer(id: number): Promise<{
+  accepted: Offer;
+  faId: number;
+  rejectedIds: number[];
+} | null> {
+  const [row] = await db.select().from(offers).where(eq(offers.id, id)).limit(1);
+  if (!row) return null;
+
+  return db.transaction(async (tx) => {
+    await tx.update(offers).set({ status: "ACCEPTED" }).where(eq(offers.id, id));
+    await tx
+      .update(freeAgents)
+      .set({ faStatus: "SIGNED", winningOfferId: id })
+      .where(eq(freeAgents.id, row.freeAgentId));
+    const others = await tx
+      .select({ id: offers.id })
+      .from(offers)
+      .where(
+        and(
+          eq(offers.freeAgentId, row.freeAgentId),
+          eq(offers.status, "PENDING"),
+        ),
+      );
+    const otherIds = others.map((o) => o.id);
+    if (otherIds.length) {
+      // mark all remaining pending offers on this FA as REJECTED
+      for (const oid of otherIds) {
+        await tx.update(offers).set({ status: "REJECTED" }).where(eq(offers.id, oid));
+      }
+    }
+    const [accepted] = await tx
+      .select()
+      .from(offers)
+      .where(eq(offers.id, id))
+      .limit(1);
+    return { accepted, faId: row.freeAgentId, rejectedIds: otherIds };
+  });
 }
