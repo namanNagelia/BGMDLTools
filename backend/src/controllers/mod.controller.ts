@@ -12,7 +12,7 @@ const isProd = process.env.NODE_ENV === "production";
 const cookieOptions = {
   httpOnly: true,
   secure: isProd,
-  sameSite: "lax" as const,
+  sameSite: (isProd ? "none" : "lax") as "none" | "lax",
   path: "/",
   maxAge: sessionCookie.maxAgeMs,
 };
