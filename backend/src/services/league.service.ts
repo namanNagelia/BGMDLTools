@@ -1,6 +1,6 @@
 import { gunzipSync } from "node:zlib";
 
-const MAX_FETCH_BYTES = 100 * 1024 * 1024; // 100 MB hard cap (compressed or raw)
+const MAX_FETCH_BYTES = 100 * 1024 * 1024;
 
 export class LeagueFetchError extends Error {
   constructor(
@@ -12,10 +12,7 @@ export class LeagueFetchError extends Error {
   }
 }
 
-/**
- * Dropbox share links default to ?dl=0 (HTML preview). Force direct download
- * by swapping to dl.dropboxusercontent.com and ?dl=1.
- */
+/** Force Dropbox share links to direct-download (dl=1 + cdn host). */
 export function normalizeDropboxUrl(input: string): string {
   let url: URL;
   try {
@@ -42,11 +39,7 @@ function isGzip(buf: Buffer): boolean {
   return buf.length >= 2 && buf[0] === 0x1f && buf[1] === 0x8b;
 }
 
-/**
- * Extract the current season number from a parsed BBGM export.
- * BBGM stores season in `gameAttributes` — historically an array of
- * `{key,value}` pairs, modern exports use a plain object.
- */
+/** Extract current season from BBGM export (handles old array + new object gameAttributes). */
 export function extractSeasonNumber(data: unknown): number | null {
   if (!data || typeof data !== "object") return null;
   const d = data as Record<string, unknown>;
@@ -82,7 +75,6 @@ export async function fetchLeagueJson(rawUrl: string): Promise<unknown> {
     throw new LeagueFetchError(`File too large (${contentLength} bytes, max ${MAX_FETCH_BYTES})`, 413);
   }
 
-  // BBGM exports can omit Content-Length; stream and enforce the cap manually
   const reader = res.body?.getReader();
   if (!reader) throw new LeagueFetchError("Empty response body", 502);
 

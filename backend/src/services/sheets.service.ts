@@ -1,7 +1,6 @@
 import { createRequire } from "node:module";
 import { getFreeAgentTeamSheetName, getValuesSheetName } from "../constants.js";
 
-//Load and add all FAs, figure out how to load and add all team values
 
 const require = createRequire(import.meta.url);
 const PublicGoogleSheetsParser = require("public-google-sheets-parser") as new (
@@ -16,10 +15,7 @@ const PublicGoogleSheetsParser = require("public-google-sheets-parser") as new (
   }): void;
 };
 
-/**
- * Extract the spreadsheet ID from a full Google Sheets URL.
- *   https://docs.google.com/spreadsheets/d/<ID>/edit?gid=...
- */
+/** Extract the spreadsheet ID from a Google Sheets URL. */
 function extractSpreadsheetId(sheetLink: string): string {
   const match = sheetLink.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
   if (!match) throw new Error("Could not extract spreadsheet ID from link");

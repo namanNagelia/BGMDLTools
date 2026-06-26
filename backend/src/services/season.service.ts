@@ -1,6 +1,6 @@
-import { eq, desc, ne, and } from "drizzle-orm";
+import { eq, desc, ne, and, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { seasons } from "../db/schema.js";
+import { freeAgents, offers, seasons } from "../db/schema.js";
 import { extractSeasonNumber, fetchLeagueJson, LeagueFetchError } from "./league.service.js";
 import { loadFreeAgentData } from "./sheets.service.js";
 import { loadSeasonRanks } from "./rank.service.js";
@@ -91,15 +91,12 @@ export async function parseSeasonSheets(id: number) {
   const [fas, ranks] = await Promise.all([
     loadFreeAgentData(seasonStr, row.sheetsLink),
     loadSeasonRanks(row.sheetsLink, getSeasonRanksSheetName(seasonStr)).catch(
-      (err) => {
-        // ranks tab is optional — return empty + error info instead of failing the whole parse
-        return {
-          market: [],
-          legacy: [],
-          winning: [],
-          error: err instanceof Error ? err.message : "rank parse failed",
-        };
-      },
+      (err) => ({
+        market: [],
+        legacy: [],
+        winning: [],
+        error: err instanceof Error ? err.message : "rank parse failed",
+      }),
     ),
   ]);
 
@@ -111,19 +108,46 @@ export async function deleteSeason(id: number): Promise<boolean> {
   return rows.length > 0;
 }
 
-export async function setSeasonWave(id: number, wave: number): Promise<Season | null> {
-  const [row] = await db
-    .update(seasons)
-    .set({ currentWave: wave })
-    .where(eq(seasons.id, id))
-    .returning();
-  return row ?? null;
+/** Flip the season's wave; entering wave 2 converts unoffered RFAs to UFAs. */
+export async function setSeasonWave(
+  id: number,
+  wave: number,
+): Promise<{ season: Season; convertedToUFA: number } | null> {
+  return db.transaction(async (tx) => {
+    const [prev] = await tx.select().from(seasons).where(eq(seasons.id, id)).limit(1);
+    if (!prev) return null;
+
+    let convertedToUFA = 0;
+    if (prev.currentWave !== 2 && wave === 2) {
+      const result = await tx
+        .update(freeAgents)
+        .set({ faStatus: "UFA" })
+        .where(
+          and(
+            eq(freeAgents.seasonId, id),
+            eq(freeAgents.faStatus, "RFA"),
+            sql`${freeAgents.winningOfferId} IS NULL`,
+            sql`NOT EXISTS (
+              SELECT 1 FROM ${offers}
+              WHERE ${offers.freeAgentId} = ${freeAgents.id}
+                AND ${offers.status} = 'PENDING'
+            )`,
+          ),
+        )
+        .returning({ id: freeAgents.id });
+      convertedToUFA = result.length;
+    }
+
+    const [row] = await tx
+      .update(seasons)
+      .set({ currentWave: wave })
+      .where(eq(seasons.id, id))
+      .returning();
+    return { season: row, convertedToUFA };
+  });
 }
 
-/**
- * Pull the BBGM JSON from the link, read the season number out of it, then
- * insert-or-update the season row keyed on season_number.
- */
+/** Fetch BBGM, detect its season number, then upsert the seasons row by that number. */
 export async function upsertSeasonFromLink(input: {
   leagueLink: string;
   makeCurrent?: boolean;

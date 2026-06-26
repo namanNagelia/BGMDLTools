@@ -50,11 +50,7 @@ function extractSpreadsheetId(sheetUrl: string): string {
   return idMatch[1];
 }
 
-/**
- * Use the gviz endpoint with `tqx=out:csv` and `sheet=<name>` — this lets
- * us target a specific tab by name on any "anyone with the link" sheet,
- * without knowing its gid.
- */
+/** Target a specific tab by name via gviz CSV — no gid required. */
 function buildGvizCsvUrl(spreadsheetId: string, sheetName: string): string {
   const params = new URLSearchParams({ tqx: "out:csv", sheet: sheetName });
   return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?${params.toString()}`;
@@ -77,11 +73,7 @@ function parsePostseason(raw: string): WinningEntry["postseason"] {
   return null;
 }
 
-/**
- * Match a city-only string ("San Diego") to a Market entry whose name
- * starts with that city ("San Diego Clippers"). Longest-prefix wins so
- * "Los Angeles" beats "Los".
- */
+/** Match a city to a Market entry whose full name starts with it; longest prefix wins. */
 function findAbbrevByCity(city: string, market: MarketEntry[]): string | null {
   const c = city.trim().toLowerCase();
   let best: MarketEntry | null = null;
@@ -108,12 +100,9 @@ export async function loadSeasonRanks(
     throw new RankFetchError("CSV parse failed", 422);
   }
 
-  // we don't trust a fixed header offset — header rows are skipped naturally
-  // because the tier columns won't parse as numbers in them.
   const rows = data;
 
-  // -------- Market: tier in col B (1), team in col C (2) ----------------
-  // canonical source of team abbreviations
+  // Market (cols B/C) — canonical source of abbreviations
   const market: MarketEntry[] = [];
   let marketTier: number | null = null;
 
@@ -126,13 +115,11 @@ export async function loadSeasonRanks(
     const cell = (r[2] ?? "").trim();
     if (marketTier == null || !cell) continue;
 
-    // "Brooklyn Nets BKN" — last token is the abbreviation
     const lastSpace = cell.lastIndexOf(" ");
     if (lastSpace === -1) continue;
     const name = cell.slice(0, lastSpace).trim();
     const abbrev = cell.slice(lastSpace + 1).trim();
     if (!name || !abbrev) continue;
-    // abbrev should look like an abbrev (all caps, short) — skip header noise
     if (abbrev.length > 5 || !/^[A-Z0-9]+$/.test(abbrev)) continue;
     market.push({ tier: marketTier, name, abbrev });
   }
@@ -140,7 +127,7 @@ export async function loadSeasonRanks(
   const nameToAbbrev = new Map<string, string>();
   for (const m of market) nameToAbbrev.set(m.name.toLowerCase(), m.abbrev);
 
-  // -------- Legacy: tier=D(3), team=E(4), T=F(5), Fnls=G(6), PO%=H(7) --
+  // Legacy (cols D-H)
   const legacy: LegacyEntry[] = [];
   let legacyTier: number | null = null;
 
@@ -153,14 +140,12 @@ export async function loadSeasonRanks(
     const name = (r[4] ?? "").trim();
     if (legacyTier == null || !name) continue;
 
-    // ignore trailing SUM / SUM MUST EQUAL totals rows
     if (/^sum/i.test(name)) continue;
 
     const titlesRaw = (r[5] ?? "").trim();
     const finalsRaw = (r[6] ?? "").trim();
     const playoffPctRaw = (r[7] ?? "").trim();
 
-    // skip header rows like "Team" / "Titles"
     if (!/^\d/.test(titlesRaw) && titlesRaw !== "0") continue;
 
     legacy.push({
@@ -173,9 +158,8 @@ export async function loadSeasonRanks(
     });
   }
 
-  // -------- Winning: rank=J(9), city=K(10) ------------------------------
-  // The top 4 cells (Champion / Finals / CF / CF) are rendered via cell
-  // formatting and come through as empty in raw CSV — infer rank by position.
+  // Winning (cols J/K) — top 4 cells render via Sheets formatting and come
+  // through empty in raw CSV, so we infer rank by row order.
   const POSTSEASON_BY_RANK: Record<number, WinningEntry["postseason"]> = {
     1: "CHAMPION",
     2: "FINALS",
@@ -199,7 +183,6 @@ export async function loadSeasonRanks(
       rank = Number(m[1]);
       postseason = m[2] ? parsePostseason(m[2]) : (POSTSEASON_BY_RANK[rank] ?? null);
     } else {
-      // empty rank cell — top 4 with formatted display, position-based
       rank = winning.length + 1;
       postseason = POSTSEASON_BY_RANK[rank] ?? null;
     }

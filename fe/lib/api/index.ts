@@ -221,6 +221,17 @@ export const mod = {
     return res.offers;
   },
 
+  async reassignFARights(faId: number, teamAbbrev: string): Promise<void> {
+    await request<{ freeAgent: unknown }>(`/api/mod/free-agents/${faId}/rights`, {
+      method: "PATCH",
+      body: JSON.stringify({ teamAbbrev }),
+    });
+  },
+
+  signedExportUrl(seasonId: number): string {
+    return `${BASE}/api/mod/seasons/${seasonId}/signed-export`;
+  },
+
   async withdrawOffer(id: number): Promise<void> {
     await request<{ ok: true }>(`/api/mod/offers/${id}/withdraw`, {
       method: "POST",
@@ -360,12 +371,14 @@ export const seasons = {
     });
   },
 
-  async setWave(id: number, wave: 1 | 2): Promise<Season> {
-    const res = await request<{ season: Season }>(
+  async setWave(
+    id: number,
+    wave: 1 | 2,
+  ): Promise<{ season: Season; convertedToUFA: number }> {
+    return request<{ season: Season; convertedToUFA: number }>(
       `/api/mod/seasons/${id}/wave/${wave}`,
       { method: "POST" },
     );
-    return res.season;
   },
 
   async remove(id: number): Promise<void> {

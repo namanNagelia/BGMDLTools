@@ -157,7 +157,12 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
     const next: 1 | 2 = season.currentWave === 1 ? 2 : 1;
     setWavingTo(next);
     try {
-      await seasonsApi.setWave(season.id, next);
+      const result = await seasonsApi.setWave(season.id, next);
+      if (next === 2 && result.convertedToUFA > 0) {
+        onError(
+          `WAVE 2 — ${result.convertedToUFA} UNOFFERED RFA${result.convertedToUFA === 1 ? "" : "S"} CONVERTED TO UFA`,
+        );
+      }
       await onChanged();
     } catch (err) {
       onError(err instanceof ApiError ? err.message.toUpperCase() : "WAVE FAILED");

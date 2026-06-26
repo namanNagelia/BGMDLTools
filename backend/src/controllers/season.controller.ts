@@ -97,12 +97,37 @@ export async function setWave(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: "invalid_request" });
     return;
   }
-  const updated = await seasonService.setSeasonWave(id.data, wave.data);
-  if (!updated) {
+  const result = await seasonService.setSeasonWave(id.data, wave.data);
+  if (!result) {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  res.json({ season: updated });
+  res.json(result);
+}
+
+const reassignSchema = z.object({ teamAbbrev: z.string().min(1).max(8) });
+
+export async function reassignRights(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const id = idParam.safeParse(req.params.id);
+  const body = reassignSchema.safeParse(req.body);
+  if (!id.success || !body.success) {
+    res.status(400).json({ error: "invalid_request" });
+    return;
+  }
+  try {
+    const updated = await faService.reassignFARights(id.data, body.data.teamAbbrev);
+    if (!updated) {
+      res.status(404).json({ error: "not_found" });
+      return;
+    }
+    res.json({ freeAgent: updated });
+  } catch (err) {
+    next(err);
+  }
 }
 
 export async function ingestFAs(

@@ -52,19 +52,10 @@ const parseStatus = (s: unknown): FaStatus => {
 
 interface PlayerIndexEntry {
   ratings: Record<string, unknown> | null;
-  /** All season-stat rows for this player, oldest → newest. */
   stats: Array<{ season: number; tid: number }>;
 }
 
-/**
- * Build a per-player index keyed by normalized full name. Includes:
- *  - the ratings snapshot for `seasonNumber`
- *  - all per-season stat rows (used to compute years-on-previous-team)
- *
- * BBGM stores ratings AND stats as arrays of per-season records. A player
- * may have multiple stats rows per season (regular + playoffs); we collapse
- * to one row per (season, tid) pair so consecutive-team counts are correct.
- */
+/** Index BBGM players by normalized name → ratings snapshot + per-season (season, tid) stats. */
 function buildPlayerIndex(
   bbgm: unknown,
   seasonNumber: number,
@@ -89,7 +80,6 @@ function buildPlayerIndex(
         : `${player.firstName ?? ""} ${player.lastName ?? ""}`.trim();
     if (!fullName) continue;
 
-    // ratings snapshot for the requested season (fallback to latest <= season)
     let ratings: Record<string, unknown> | null = null;
     if (Array.isArray(player.ratings)) {
       const arr = player.ratings as Array<{ season?: number }>;
@@ -105,7 +95,6 @@ function buildPlayerIndex(
       ratings = pick ?? null;
     }
 
-    // dedupe stats by (season, tid)
     const seenKeys = new Set<string>();
     const stats: Array<{ season: number; tid: number }> = [];
     if (Array.isArray(player.stats)) {
@@ -124,11 +113,7 @@ function buildPlayerIndex(
   return map;
 }
 
-/**
- * Walk a player's per-season stats backward from `priorSeason` (= seasonNumber - 1)
- * counting how many consecutive seasons they were on `tid`.
- * Returns 0 if they were never on that tid (shouldn't happen for a real FA).
- */
+/** Walk stats backward from priorSeason, counting consecutive seasons on `tid`. */
 function consecutiveYearsOnTeam(
   stats: Array<{ season: number; tid: number }>,
   tid: number,
@@ -136,12 +121,11 @@ function consecutiveYearsOnTeam(
 ): number {
   if (!stats.length) return 0;
   let count = 0;
-  // walk newest → oldest, only seasons <= priorSeason
   for (let i = stats.length - 1; i >= 0; i--) {
     const row = stats[i];
     if (row.season > priorSeason) continue;
     if (row.tid === tid) count++;
-    else if (count > 0) break; // a different team breaks the streak
+    else if (count > 0) break;
   }
   return count;
 }
@@ -196,14 +180,10 @@ interface TeamPayroll {
 }
 
 function nowYear(): number {
-  // BBGM seasons are stored as years; we don't need precise current year for our purposes
   return new Date().getUTCFullYear();
 }
 
-/**
- * Walk BBGM teams + players to compute a per-team roster and payroll.
- * BBGM contract.amount is in thousands of dollars; we report millions.
- */
+/** Build per-team rosters + payrolls from BBGM. Contract amount converted thousands → millions. */
 function buildTeamPayrolls(bbgm: unknown, seasonNumber: number): TeamPayroll[] {
   if (!bbgm || typeof bbgm !== "object") return [];
   const d = bbgm as { teams?: unknown; players?: unknown };
@@ -236,7 +216,6 @@ function buildTeamPayrolls(bbgm: unknown, seasonNumber: number): TeamPayroll[] {
         ? p.name
         : `${p.firstName ?? ""} ${p.lastName ?? ""}`.trim();
 
-    // most recent ratings (or matching season)
     let pos: string | null = null;
     let ovr: number | null = null;
     if (Array.isArray(p.ratings) && p.ratings.length) {
@@ -316,7 +295,6 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
   const playerIndex = buildPlayerIndex(bbgm, season.seasonNumber);
   const abbrevToTid = buildAbbrevToTid(bbgm);
 
-  // join: only players present in both sheets get inserted (we need columns from each)
   const rowsToInsert: (typeof freeAgents.$inferInsert)[] = [];
   const unmatchedFromValues: string[] = [];
   let ratingsAttached = 0;
@@ -332,7 +310,6 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     const ratings = idxEntry?.ratings ?? null;
     if (ratings) ratingsAttached++;
 
-    // loyalty: count consecutive recent seasons the player was on previousTeam
     const prevAbbrev = String(team.Team ?? "").trim();
     const prevTid = prevAbbrev ? abbrevToTid.get(prevAbbrev) : undefined;
     let yearsOnPreviousTeam = 1;
@@ -375,7 +352,6 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     if (!teamByName.has(key)) unmatchedFromTeam.push(v.Name ?? key);
   }
 
-  // teams: build from BBGM
   const teamPayrolls = buildTeamPayrolls(bbgm, season.seasonNumber);
   const teamRows = teamPayrolls.map((t) => ({
     seasonId: season.id,
@@ -386,7 +362,6 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     roster: t.roster,
   }));
 
-  // shape rank rows for replace-insert
   const marketRows = ranks.market.map((m) => ({
     seasonId: season.id,
     teamAbbrev: m.abbrev,
@@ -417,7 +392,6 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     ranks.legacy.filter((r) => r.abbrev === "?").length +
     ranks.winning.filter((w) => w.abbrev === "?").length;
 
-  // replace existing FAs + ranks + teams for this season (idempotent re-ingest)
   await db.transaction(async (tx) => {
     await tx.delete(freeAgents).where(eq(freeAgents.seasonId, season.id));
     if (rowsToInsert.length) await tx.insert(freeAgents).values(rowsToInsert);
@@ -454,6 +428,19 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
 
 export async function listFreeAgentsForSeason(seasonId: number) {
   return db.select().from(freeAgents).where(eq(freeAgents.seasonId, seasonId));
+}
+
+/** Manually reassign which team holds an FA's Bird/cap-hold rights (mid-FA trades). */
+export async function reassignFARights(
+  faId: number,
+  newTeamAbbrev: string,
+): Promise<typeof freeAgents.$inferSelect | null> {
+  const [updated] = await db
+    .update(freeAgents)
+    .set({ previousTeam: newTeamAbbrev, renounced: false })
+    .where(eq(freeAgents.id, faId))
+    .returning();
+  return updated ?? null;
 }
 
 /**

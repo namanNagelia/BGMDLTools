@@ -461,6 +461,8 @@ export async function calcFreeAgentWinner(faId: number): Promise<CalcResult> {
   }
 
   const isRFA = fa.faStatus === "RFA";
+  // player.values shows actual sheet values regardless of FA status — the
+  // omission for RFAs happens at scoring time, not by zeroing the inputs.
   const player = {
     id: fa.id,
     name: fa.name,
@@ -469,15 +471,29 @@ export async function calcFreeAgentWinner(faId: number): Promise<CalcResult> {
     faStatus: fa.faStatus,
     previousTeam: fa.previousTeam,
     values: {
-      market: isRFA ? 0 : fa.marketValue,
-      legacy: isRFA ? 0 : fa.legacyValue,
-      playingTime: isRFA ? 0 : fa.playingTimeValue,
-      winning: isRFA ? 0 : fa.winningValue,
-      loyalty: isRFA ? 0 : fa.loyaltyValue,
+      market: fa.marketValue,
+      legacy: fa.legacyValue,
+      playingTime: fa.playingTimeValue,
+      winning: fa.winningValue,
+      loyalty: fa.loyaltyValue,
       money: fa.moneyValue,
       length: fa.lengthValue,
     },
   };
+
+  /** Zero-point placeholder for value keys we explicitly skip (e.g. RFA-omitted). */
+  function omitted(key: ValueKey, pv: number, note: string): ValueLine {
+    const m = MULTIPLIERS[key];
+    return {
+      key,
+      playerValue: pv,
+      baseMultiplier: m,
+      effectiveMultiplier: m,
+      won: false,
+      points: 0,
+      note,
+    };
+  }
 
   /** Score every offer in the given pool against each other. */
   function scoreAll(pool: OfferInput[]): OfferScore[] {
@@ -495,22 +511,39 @@ export async function calcFreeAgentWinner(faId: number): Promise<CalcResult> {
       const isIncumbent = o.teamAbbrev === fa.previousTeam;
       const hasZeroLength = player.values.length === 0;
 
-      const values: ValueLine[] = [
-        scoreMarket(player.values.market, poolTeam),
-        scoreLegacy(player.values.legacy, poolTeam),
-        scorePlayingTime(player.values.playingTime, poolTeam, poolTeams),
-        scoreWinning(player.values.winning, poolTeam, poolTeams),
-        scoreLoyalty(player.values.loyalty, isIncumbent, fa.yearsOnPreviousTeam),
-        scoreMoney(
-          player.values.money,
-          o.amount,
-          o.amount * o.years,
-          moneyPool,
-          isRFA,
-          hasZeroLength,
-        ),
-        scoreLength(player.values.length, o.years, lengthPool),
-      ];
+      const values: ValueLine[] = isRFA
+        ? [
+            omitted("market", player.values.market, "RFA — not counted"),
+            omitted("legacy", player.values.legacy, "RFA — not counted"),
+            omitted("playingTime", player.values.playingTime, "RFA — not counted"),
+            omitted("winning", player.values.winning, "RFA — not counted"),
+            omitted("loyalty", player.values.loyalty, "RFA — not counted"),
+            scoreMoney(
+              player.values.money,
+              o.amount,
+              o.amount * o.years,
+              moneyPool,
+              isRFA,
+              hasZeroLength,
+            ),
+            scoreLength(player.values.length, o.years, lengthPool),
+          ]
+        : [
+            scoreMarket(player.values.market, poolTeam),
+            scoreLegacy(player.values.legacy, poolTeam),
+            scorePlayingTime(player.values.playingTime, poolTeam, poolTeams),
+            scoreWinning(player.values.winning, poolTeam, poolTeams),
+            scoreLoyalty(player.values.loyalty, isIncumbent, fa.yearsOnPreviousTeam),
+            scoreMoney(
+              player.values.money,
+              o.amount,
+              o.amount * o.years,
+              moneyPool,
+              isRFA,
+              hasZeroLength,
+            ),
+            scoreLength(player.values.length, o.years, lengthPool),
+          ];
 
       const total = values.reduce((s, v) => s + v.points, 0);
       return {

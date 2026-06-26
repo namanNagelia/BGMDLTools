@@ -12,12 +12,9 @@ export const MLE1_YRS = 4;
 export const MLE2_AMT = 4.5;
 export const MLE2_YRS = 3;
 export const MIN_SALARY = 1; // $M/yr
-export const MAX_SALARY = 33; // $M/yr — league hard ceiling
+export const MAX_SALARY = 33;
 
-// Hard rules — these REJECT an offer at submit time and also surface as
-// `invalidReasons` flags on reads if any data ever drifts.
-
-/** [ovrThreshold, minAmountM] — highest threshold wins (e.g. ovr 71 → 33M). */
+/** [ovrThreshold, minAmountM] — highest threshold matched wins. */
 const OVR_MIN_TABLE: Array<[number, number]> = [
   [70, 33],
   [68, 28],
@@ -42,12 +39,10 @@ export function computeHardViolations(
 ): string[] {
   const violations: string[] = [];
 
-  // League max
   if (amount > MAX_SALARY) {
     violations.push(`Exceeds league max contract ($${MAX_SALARY}M/yr)`);
   }
 
-  // OVR-based minimum amount
   const minByOvr = minAmountForOvr(fa.overall);
   if (amount < minByOvr) {
     if (fa.overall >= 70) {
@@ -57,7 +52,6 @@ export function computeHardViolations(
     }
   }
 
-  // Length rules by FA status
   if (fa.faStatus === "RFA") {
     const minYrs = amount >= 10 ? 3 : 2;
     if (years < minYrs || years > 5) {
@@ -65,11 +59,8 @@ export function computeHardViolations(
         `RFA at $${amount}M/yr must be ${minYrs}–5 years (got ${years})`,
       );
     }
-  } else {
-    // UFA / SIGNED / TBD → UFA length rules
-    if (years < 1 || years > 5) {
-      violations.push(`UFA contracts must be 1–5 years (got ${years})`);
-    }
+  } else if (years < 1 || years > 5) {
+    violations.push(`UFA contracts must be 1–5 years (got ${years})`);
   }
 
   return violations;
@@ -114,7 +105,6 @@ export function computeInvalidReasons(input: ValidateInput): string[] {
   const isOwn = fa.previousTeam === teamAbbrev;
   const hasBird = isOwn && !fa.renounced;
 
-  // -- HARD CAP ---------------------------------------------------------
   const projectedTotal = totalCommitted + otherOfferTotal + amount;
   if (projectedTotal > HARD_CAP) {
     const over = projectedTotal - HARD_CAP;
@@ -123,9 +113,7 @@ export function computeInvalidReasons(input: ValidateInput): string[] {
     );
   }
 
-  // -- BIRD / NO BIRD ---------------------------------------------------
   if (!hasBird) {
-    // Must fit under soft cap unless using MLE or min salary
     const isMin = amount <= MIN_SALARY;
     const inMLE1Tier = totalCommitted >= MLE1_FLOOR && totalCommitted <= MLE1_CEIL;
     const inMLE2Tier = totalCommitted > MLE1_CEIL;
@@ -161,7 +149,7 @@ export function mleStatusFor(totalCommitted: number): MLEStatus {
   return { available: true, tier: 2, maxAmount: MLE2_AMT, maxYears: MLE2_YRS };
 }
 
-/** Cheap helper to load the cap context for a team in the current season. */
+/** Load the cap context (current season + team row + that team's own FAs). */
 export async function loadTeamCapContext(teamAbbrev: string): Promise<{
   season: typeof seasons.$inferSelect;
   team: typeof teams.$inferSelect | null;
@@ -211,10 +199,7 @@ export interface OfferPreview {
   warnings: string[]; // formerly "invalidReasons" — cap/Bird/MLE flags
 }
 
-/**
- * Dry-run validate an offer without inserting. Used by the GM form so users
- * see rule violations and cap warnings live before they submit.
- */
+/** Dry-run validate an offer (used by the GM form for live warnings). */
 export async function previewOffer(input: {
   freeAgentId: number;
   teamAbbrev: string;
@@ -268,7 +253,6 @@ export async function createOffer(input: {
     .limit(1);
   if (!fa) throw new LeagueFetchError("Free agent not found", 404);
 
-  // hard contract-shape rules — REJECT here
   const hardViolations = computeHardViolations(fa, input.amount, input.years);
   if (hardViolations.length > 0) throw new OfferValidationError(hardViolations);
 
@@ -285,7 +269,6 @@ export async function createOffer(input: {
     })
     .returning();
 
-  // compute live validity for the response
   const ctx = await loadTeamCapContext(input.teamAbbrev);
   if (!ctx) return { offer: row, invalidReasons: [] };
   const payroll = ctx.team ? Number(ctx.team.totalSalary) : 0;
@@ -309,11 +292,10 @@ export async function createOffer(input: {
   return { offer: row, invalidReasons };
 }
 
-/** Annotate a list of offers with live invalidReasons, by re-evaluating each. */
+/** Attach live invalidReasons to each offer by re-evaluating cap + hard rules. */
 async function annotate(rawOffers: Offer[]): Promise<OfferWithFlags[]> {
   if (rawOffers.length === 0) return [];
 
-  // Batch-load all involved players, teams, seasons
   const faIds = Array.from(new Set(rawOffers.map((o) => o.freeAgentId)));
   const fas = faIds.length
     ? await db
@@ -323,7 +305,6 @@ async function annotate(rawOffers: Offer[]): Promise<OfferWithFlags[]> {
     : [];
   const faById = new Map(fas.map((f) => [f.id, f]));
 
-  // Pre-load per-team context once (cap per team across this batch)
   const teamAbbrevs = Array.from(new Set(rawOffers.map((o) => o.teamAbbrev)));
   const contexts = new Map<
     string,
@@ -331,7 +312,6 @@ async function annotate(rawOffers: Offer[]): Promise<OfferWithFlags[]> {
   >();
   for (const abv of teamAbbrevs) contexts.set(abv, await loadTeamCapContext(abv));
 
-  // Pending offers per team (for the other-offers calc)
   const pendingByTeam = new Map<string, Offer[]>();
   for (const abv of teamAbbrevs) {
     const ctx = contexts.get(abv);
@@ -399,10 +379,7 @@ export async function modWithdrawOffer(id: number): Promise<boolean> {
   return true;
 }
 
-/**
- * Mod accepts an offer → FA gets signed, every other pending offer on that FA
- * is rejected. Done in a single transaction.
- */
+/** Mod accepts an offer → sign the FA, auto-reject all other pending offers on them. */
 export async function modAcceptOffer(id: number): Promise<{
   accepted: Offer;
   faId: number;
@@ -428,7 +405,6 @@ export async function modAcceptOffer(id: number): Promise<{
       );
     const otherIds = others.map((o) => o.id);
     if (otherIds.length) {
-      // mark all remaining pending offers on this FA as REJECTED
       for (const oid of otherIds) {
         await tx.update(offers).set({ status: "REJECTED" }).where(eq(offers.id, oid));
       }
