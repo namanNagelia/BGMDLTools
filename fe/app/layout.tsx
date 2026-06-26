@@ -1,17 +1,16 @@
 import type { Metadata } from "next";
-import { Anton, Fraunces, JetBrains_Mono } from "next/font/google";
+import { Oswald, Onest, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const display = Anton({
+const display = Oswald({
   variable: "--font-display",
   subsets: ["latin"],
-  weight: "400",
+  weight: ["500", "600", "700"],
 });
 
-const serif = Fraunces({
+const serif = Onest({
   variable: "--font-serif",
   subsets: ["latin"],
-  axes: ["opsz", "SOFT"],
 });
 
 const mono = JetBrains_Mono({

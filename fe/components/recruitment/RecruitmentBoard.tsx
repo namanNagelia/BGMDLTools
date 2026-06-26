@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import { TeamCard } from "./TeamCard";
 import { OfferModal } from "./OfferModal";
+import { HowToPanel } from "../HowToPanel";
 
 const TEAM_STORAGE_KEY = "gmTeamAbbrev";
 
@@ -268,6 +269,54 @@ export function RecruitmentBoard() {
 
   return (
     <div className="space-y-5">
+      <HowToPanel
+        storageKey="gm-howto-open"
+        title="HOW TO SUBMIT AN OFFER"
+        steps={[
+          {
+            num: 1,
+            title: "Pick your team",
+            body: (
+              <>Use the <b>YOUR TEAM</b> dropdown (top right). Your cap snapshot, eligibility, expiring FAs and ranks all unlock.</>
+            ),
+          },
+          {
+            num: 2,
+            title: "Check your room",
+            body: (
+              <>The cap card shows payroll, cap holds, soft + hard cap room, and which tools you can use (<b>MLE</b>, <b>min</b>, <b>Bird</b> on your own non-renounced FAs).</>
+            ),
+          },
+          {
+            num: 3,
+            title: "Renounce what you don't want",
+            body: (
+              <>In <b>MANAGE RENOUNCEMENTS</b>, drop the cap holds for any expiring FAs you won't re-sign. This frees real money but waives Bird rights on them.</>
+            ),
+          },
+          {
+            num: 4,
+            title: "Find players",
+            body: (
+              <>Search by name, filter by position / team / status. Toggle <b>FIT FILTER</b> to narrow to players whose MKT / LGC matches your team — matching cells highlight orange in every row.</>
+            ),
+          },
+          {
+            num: 5,
+            title: "Send an offer",
+            body: (
+              <>Click <b>OFFER</b> on any row. Enter amount ($M/yr), years, your GM name, and a code word the mod will recognize as yours. Live warnings show if your cap doesn't fit — submit anyway (trades count).</>
+            ),
+          },
+          {
+            num: 6,
+            title: "Wait for the call",
+            body: (
+              <>Mods process offers using the FA value calc. You won't see other teams' offers. If you sign someone, they show up in the next ingest as part of your roster.</>
+            ),
+          },
+        ]}
+      />
       {/* HEADER STRIP -------------------------------------------------- */}
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div>

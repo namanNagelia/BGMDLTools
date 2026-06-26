@@ -6,6 +6,7 @@ import { mod } from "@/lib/api";
 import { LoginCard } from "@/components/mod/LoginCard";
 import { SeasonManager } from "@/components/mod/SeasonManager";
 import { OffersInbox } from "@/components/mod/OffersInbox";
+import { HowToPanel } from "@/components/HowToPanel";
 
 type AuthState = "checking" | "anon" | "mod";
 
@@ -80,6 +81,90 @@ export default function ModPage() {
 
         {auth === "mod" && (
           <div className="space-y-20">
+            <HowToPanel
+              storageKey="mod-howto-open"
+              title="HOW TO RUN A FA CYCLE"
+              steps={[
+                {
+                  num: 1,
+                  title: "File the season",
+                  body: (
+                    <>
+                      In <b>FILE A NEW SEASON</b>, paste the Dropbox link to the BBGM export + the Google Sheets URL with the FA tabs.
+                      Click <b>PULL · FILE · INGEST</b>. The system fetches the league file, the sheets, and the ranks tab in one shot — players, ratings, market/legacy/winning ranks, team payrolls and rosters all loaded.
+                    </>
+                  ),
+                },
+                {
+                  num: 2,
+                  title: "Mark current + start in WAVE 1",
+                  body: (
+                    <>
+                      The new season auto-marks current if you checked the box. The wave starts at <b>1</b>. GMs can now visit the home page, pick their team, browse FAs and submit offers.
+                    </>
+                  ),
+                },
+                {
+                  num: 3,
+                  title: "Reassign rights for trades (as needed)",
+                  body: (
+                    <>
+                      If a Bird rights trade happens mid-FA, find the player in <b>INCOMING OFFERS</b> and pick the new team in the <b>RIGHTS</b> dropdown. Cap holds and Bird eligibility recompute instantly across all offers.
+                    </>
+                  ),
+                },
+                {
+                  num: 4,
+                  title: "Re-import with processed trades",
+                  body: (
+                    <>
+                      Before you start resolving signings, make sure every trade that closed during the wave is in the BBGM file. Edit the season's <b>json:</b> link (inline EDIT) to the latest export and hit <b>SAVE + INGEST</b> — payrolls, rosters, cap holds and ratings all refresh, and every existing offer's warnings recompute live.
+                    </>
+                  ),
+                },
+                {
+                  num: 5,
+                  title: "Process offers — CALC & RESOLVE",
+                  body: (
+                    <>
+                      On each player group in the inbox, click <b>CALC & RESOLVE</b>. See the per-value math (Market / Legacy / PT / Winning / Loyalty / Money / Length), 10M/20M filter kills, Hayato elimination rounds, and the auto-picked winner. Click <b>ACCEPT</b> on the winner — or <b>OVERRIDE</b> any other offer. Accepting signs the FA and auto-rejects all other offers on them.
+                    </>
+                  ),
+                },
+                {
+                  num: 6,
+                  title: "Flip to WAVE 2",
+                  body: (
+                    <>
+                      When wave 1 is done, click the <b>WAVE 1</b> button on the season row. Unsigned RFAs with <i>no</i> pending offers auto-convert to UFA (per the rules). RFAs with pending offers stay RFA so match-rights still work.
+                    </>
+                  ),
+                },
+                {
+                  num: 7,
+                  title: "Repeat resolution for WAVE 2",
+                  body: <>Same loop: re-import the export first, then resolve.</>,
+                },
+                {
+                  num: 8,
+                  title: "Download the signed export",
+                  body: (
+                    <>
+                      Switch to the <b>SIGNED</b> tab in the offers inbox. Click <b>↓ DOWNLOAD SIGNED EXPORT</b>. The server fetches your league file, applies every accepted offer (player tids + contracts), gzips it and downloads. Drop it into BBGM and all the signings land at once.
+                    </>
+                  ),
+                },
+                {
+                  num: 9,
+                  title: "If something looks wrong",
+                  body: (
+                    <>
+                      Edit the Dropbox link inline (or re-pull) to refresh from the latest export — every offer's warnings auto-recompute. Mods can <b>WITHDRAW</b> any pending offer. Renouncements + ingest are both safe to re-run.
+                    </>
+                  ),
+                },
+              ]}
+            />
             <SeasonManager />
             <OffersInbox />
           </div>
