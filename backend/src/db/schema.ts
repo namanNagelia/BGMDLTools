@@ -6,6 +6,7 @@ import {
   boolean,
   decimal,
   jsonb,
+  timestamp,
   pgEnum,
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
@@ -16,6 +17,7 @@ export const seasons = pgTable("seasons", {
   leagueLink: text("league_link").notNull(),
   sheetsLink: text("sheets_link"),
   isCurrentSzn: boolean("is_current_szn").default(false).notNull(),
+  currentWave: integer("current_wave").default(1).notNull(),
 });
 
 export const statusEnum = pgEnum("fa_status", ["SIGNED", "RFA", "UFA", "TBD"]);
@@ -38,11 +40,25 @@ export const freeAgents = pgTable("free_agents", {
   loyaltyValue: integer("loyalty_value").notNull(),
   moneyValue: integer("money_value").notNull(),
   lengthValue: integer("length_value").notNull(),
+  wave: integer("wave").default(1).notNull(),
   ratings: jsonb("ratings"),
+  renounced: boolean("renounced").default(false).notNull(),
   winningOfferId: integer("winning_offer_id").references(
     (): AnyPgColumn => offers.id,
     { onDelete: "set null" },
   ),
+});
+
+export const teams = pgTable("teams", {
+  id: serial("id").primaryKey(),
+  seasonId: integer("season_id")
+    .references(() => seasons.id, { onDelete: "cascade" })
+    .notNull(),
+  tid: integer("tid").notNull(),
+  abbrev: text("abbrev").notNull(),
+  name: text("name").notNull(),
+  totalSalary: decimal("total_salary", { precision: 10, scale: 2 }).notNull(),
+  roster: jsonb("roster"),
 });
 
 export const marketRanks = pgTable("market_ranks", {
@@ -79,16 +95,25 @@ export const winningRanks = pgTable("winning_ranks", {
   postseason: text("postseason"), // CHAMPION | FINALS | CF | null
 });
 
+export const offerStatusEnum = pgEnum("offer_status", [
+  "PENDING",
+  "ACCEPTED",
+  "REJECTED",
+  "WITHDRAWN",
+]);
+
 export const offers = pgTable("offers", {
   id: serial("id").primaryKey(),
   freeAgentId: integer("free_agent_id")
-    .references(() => freeAgents.id)
+    .references(() => freeAgents.id, { onDelete: "cascade" })
     .notNull(),
-  teamName: text("team_name").notNull(),
+  teamAbbrev: text("team_abbrev").notNull(),
   offerAmount: decimal("offer_amount", { precision: 10, scale: 2 }).notNull(),
   offerLength: integer("offer_length").notNull(),
   offerSeason: integer("offer_season")
-    .references(() => seasons.id)
+    .references(() => seasons.id, { onDelete: "cascade" })
     .notNull(),
   offerGm: text("offer_gm").notNull(),
+  status: offerStatusEnum("status").default("PENDING").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

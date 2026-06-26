@@ -20,6 +20,8 @@ const fromLinkSchema = z.object({
   makeCurrent: z.boolean().optional(),
 });
 
+const waveParam = z.coerce.number().int().min(1).max(2);
+
 const idParam = z.coerce.number().int().positive();
 
 export async function list(_req: Request, res: Response): Promise<void> {
@@ -88,6 +90,21 @@ export async function createFromLink(
   }
 }
 
+export async function setWave(req: Request, res: Response): Promise<void> {
+  const id = idParam.safeParse(req.params.id);
+  const wave = waveParam.safeParse(req.params.wave);
+  if (!id.success || !wave.success) {
+    res.status(400).json({ error: "invalid_request" });
+    return;
+  }
+  const updated = await seasonService.setSeasonWave(id.data, wave.data);
+  if (!updated) {
+    res.status(404).json({ error: "not_found" });
+    return;
+  }
+  res.json({ season: updated });
+}
+
 export async function ingestFAs(
   req: Request,
   res: Response,
@@ -114,6 +131,38 @@ export async function listCurrentSeasonFAs(
   try {
     const data = await faService.listFreeAgentsForCurrentSeason();
     res.json(data);
+  } catch (err) {
+    next(err);
+  }
+}
+
+const renounceSchema = z.object({
+  teamAbbrev: z.string().min(1).max(8),
+  renounced: z.boolean(),
+});
+
+export async function renounceFA(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const id = idParam.safeParse(req.params.id);
+  const body = renounceSchema.safeParse(req.body);
+  if (!id.success || !body.success) {
+    res.status(400).json({ error: "invalid_request" });
+    return;
+  }
+  try {
+    const result = await faService.setRenounced(
+      id.data,
+      body.data.teamAbbrev,
+      body.data.renounced,
+    );
+    if ("error" in result) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    res.json(result);
   } catch (err) {
     next(err);
   }

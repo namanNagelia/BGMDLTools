@@ -5,6 +5,7 @@ import Link from "next/link";
 import { mod } from "@/lib/api";
 import { LoginCard } from "@/components/mod/LoginCard";
 import { SeasonManager } from "@/components/mod/SeasonManager";
+import { OffersInbox } from "@/components/mod/OffersInbox";
 
 type AuthState = "checking" | "anon" | "mod";
 
@@ -77,7 +78,12 @@ export default function ModPage() {
 
         {auth === "anon" && <LoginCard onAuthed={() => setAuth("mod")} />}
 
-        {auth === "mod" && <SeasonManager />}
+        {auth === "mod" && (
+          <div className="space-y-20">
+            <SeasonManager />
+            <OffersInbox />
+          </div>
+        )}
       </main>
 
       {/* footer ----------------------------------------------------------- */}

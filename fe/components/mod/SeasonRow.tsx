@@ -43,12 +43,20 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
   const [sheetsDraft, setSheetsDraft] = useState(season.sheetsLink ?? "");
   const [savingSheets, setSavingSheets] = useState(false);
 
+  // league-link inline editor
+  const [editingLeague, setEditingLeague] = useState(false);
+  const [leagueDraft, setLeagueDraft] = useState(season.leagueLink);
+  const [savingLeague, setSavingLeague] = useState(false);
+
   // delete confirm
   const [confirmDel, setConfirmDel] = useState(false);
 
   // ingest
   const [ingesting, setIngesting] = useState(false);
   const [ingestResult, setIngestResult] = useState<IngestResult | null>(null);
+
+  // wave
+  const [wavingTo, setWavingTo] = useState<1 | 2 | null>(null);
 
   async function handlePullJson() {
     setMode("json");
@@ -114,6 +122,50 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
     }
   }
 
+  async function handleSaveLeague() {
+    const trimmed = leagueDraft.trim();
+    if (!trimmed) {
+      onError("LEAGUE LINK REQUIRED");
+      return;
+    }
+    setSavingLeague(true);
+    setIngestResult(null);
+    try {
+      await seasonsApi.update(season.id, { leagueLink: trimmed });
+      setEditingLeague(false);
+      // auto-ingest so caps, ratings, ranks all reflect the new file
+      setIngesting(true);
+      try {
+        const result = await seasonsApi.ingestFAs(season.id);
+        setIngestResult(result);
+      } catch (err) {
+        onError(
+          err instanceof ApiError ? err.message.toUpperCase() : "INGEST FAILED",
+        );
+      } finally {
+        setIngesting(false);
+      }
+      await onChanged();
+    } catch (err) {
+      onError(err instanceof ApiError ? err.message.toUpperCase() : "SAVE FAILED");
+    } finally {
+      setSavingLeague(false);
+    }
+  }
+
+  async function handleFlipWave() {
+    const next: 1 | 2 = season.currentWave === 1 ? 2 : 1;
+    setWavingTo(next);
+    try {
+      await seasonsApi.setWave(season.id, next);
+      await onChanged();
+    } catch (err) {
+      onError(err instanceof ApiError ? err.message.toUpperCase() : "WAVE FAILED");
+    } finally {
+      setWavingTo(null);
+    }
+  }
+
   async function handleSetCurrent() {
     try {
       await seasonsApi.setCurrent(season.id);
@@ -164,10 +216,56 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
         </div>
 
         <div className="col-span-6 space-y-1 min-w-0">
-          <div className="font-mono text-[11px] truncate opacity-80" title={season.leagueLink}>
-            <span className="opacity-50">json: </span>
-            {season.leagueLink}
-          </div>
+          {editingLeague ? (
+            <div className="flex gap-2">
+              <input
+                type="url"
+                autoFocus
+                value={leagueDraft}
+                onChange={(e) => setLeagueDraft(e.target.value)}
+                placeholder="https://www.dropbox.com/.../league.json.gz?…"
+                className="flex-1 bg-transparent border rule px-2 py-1 outline-none font-mono text-[11px] focus:border-[var(--leather)] transition-colors"
+              />
+              <button
+                onClick={handleSaveLeague}
+                disabled={savingLeague || ingesting}
+                title="Save dropbox link + auto-ingest"
+                className="font-mono text-[10px] tracking-widest px-2 py-1 bg-[var(--leather)] text-[var(--paper)] hover:bg-[var(--leather-2)] disabled:opacity-40 transition-colors min-w-[6rem] flex items-center justify-center gap-1.5"
+              >
+                {savingLeague || ingesting ? (
+                  <>
+                    <span className="spinner" />
+                    <span>{ingesting ? "INGESTING" : "SAVING"}</span>
+                  </>
+                ) : (
+                  "SAVE + INGEST"
+                )}
+              </button>
+              <button
+                onClick={() => {
+                  setEditingLeague(false);
+                  setLeagueDraft(season.leagueLink);
+                }}
+                className="font-mono text-[10px] tracking-widest px-2 py-1 border rule opacity-70 hover:opacity-100 transition-opacity"
+              >
+                ✕
+              </button>
+            </div>
+          ) : (
+            <div
+              className="font-mono text-[11px] truncate opacity-80 flex items-baseline gap-2"
+              title={season.leagueLink}
+            >
+              <span className="opacity-50 shrink-0">json:</span>
+              <span className="truncate">{season.leagueLink}</span>
+              <button
+                onClick={() => setEditingLeague(true)}
+                className="font-mono text-[9px] tracking-widest opacity-50 hover:opacity-100 hover:text-[var(--leather)] shrink-0"
+              >
+                EDIT
+              </button>
+            </div>
+          )}
 
           {editingSheets ? (
             <div className="flex gap-2">
@@ -291,6 +389,21 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
               MARK
             </button>
           )}
+          <button
+            onClick={handleFlipWave}
+            disabled={wavingTo !== null}
+            title={`Currently in wave ${season.currentWave} — click to flip`}
+            className="font-mono text-[10px] tracking-widest px-2 py-1 border rule hover:bg-[var(--leather)] hover:border-[var(--leather)] hover:text-[var(--paper)] disabled:opacity-40 transition-colors flex items-center gap-1.5"
+          >
+            {wavingTo !== null ? (
+              <>
+                <span className="spinner" />
+                <span>W{wavingTo}…</span>
+              </>
+            ) : (
+              `WAVE ${season.currentWave}`
+            )}
+          </button>
           {confirmDel ? (
             <>
               <button

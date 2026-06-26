@@ -11,6 +11,7 @@ router.post("/", controller.create);
 router.post("/from-link", controller.createFromLink);
 router.patch("/:id", controller.update);
 router.post("/:id/current", controller.setCurrent);
+router.post("/:id/wave/:wave", controller.setWave);
 router.post("/:id/parse-sheets", controller.parseSheets);
 router.post("/:id/ingest-fas", controller.ingestFAs);
 router.delete("/:id", controller.remove);

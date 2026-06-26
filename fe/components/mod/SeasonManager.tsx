@@ -67,7 +67,8 @@ export function SeasonManager() {
         ingested = ing.inserted;
         ratings = ing.ratingsAttached;
         skipped =
-          ing.unmatchedFromTeamSheet.length + ing.unmatchedFromValuesSheet.length;
+          ing.unmatchedFromTeamSheet.length +
+          ing.unmatchedFromValuesSheet.length;
       }
 
       setLastResult({
@@ -136,8 +137,10 @@ export function SeasonManager() {
 
         <label className="block">
           <div className="font-mono text-[10px] tracking-widest opacity-60 mb-1 flex items-baseline justify-between">
-            <span>SHEETS LINK (OPTIONAL)</span>
-            <span className="opacity-50">IF SET — AUTO-INGESTS FAs AFTER FILING</span>
+            <span>SHEETS LINK</span>
+            <span className="opacity-50">
+              IF SET — AUTO-INGESTS FAs AFTER FILING
+            </span>
           </div>
           <input
             type="url"
@@ -194,7 +197,9 @@ export function SeasonManager() {
                   · {lastResult.ratings}/{lastResult.ingested} with ratings
                 </span>
                 {lastResult.skipped ? (
-                  <span className="opacity-60">· {lastResult.skipped} skipped</span>
+                  <span className="opacity-60">
+                    · {lastResult.skipped} skipped
+                  </span>
                 ) : null}
               </>
             )}
@@ -211,7 +216,8 @@ export function SeasonManager() {
       {/* LEDGER TABLE --------------------------------------------------- */}
       {loading ? (
         <div className="font-mono text-xs tracking-widest opacity-60 py-12">
-          OPENING LEDGER<span className="caret ml-1" />
+          OPENING LEDGER
+          <span className="caret ml-1" />
         </div>
       ) : rows.length === 0 ? (
         <div className="border-2 border-dashed border-[color:var(--rule-soft)] py-12 text-center font-mono text-xs tracking-widest opacity-60">

@@ -9,6 +9,7 @@ import {
   type Season,
 } from "@/lib/api";
 import { TeamCard } from "./TeamCard";
+import { OfferModal } from "./OfferModal";
 
 const TEAM_STORAGE_KEY = "gmTeamAbbrev";
 
@@ -41,7 +42,6 @@ const COLUMNS: Column[] = [
   { key: "position", label: "Pos", width: "50px" },
   { key: "age", label: "Age", width: "50px", align: "right" },
   { key: "overall", label: "Ovr", width: "50px", align: "right" },
-  { key: "capHold", label: "Cap Hold", width: "80px", align: "right" },
   { key: "faStatus", label: "Status", width: "70px" },
   { key: "marketValue", label: "MKT", width: "50px", align: "right" },
   { key: "legacyValue", label: "LGC", width: "50px", align: "right" },
@@ -87,10 +87,12 @@ export function RecruitmentBoard() {
     season: Season | null;
     freeAgents: FreeAgent[];
     ranks: CurrentSeasonRanks;
+    teams: Record<string, import("@/lib/api").TeamRow>;
   }>({
     season: null,
     freeAgents: [],
     ranks: { market: {}, legacy: {}, winning: {} },
+    teams: {},
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -107,6 +109,7 @@ export function RecruitmentBoard() {
   const [sortDir, setSortDir] = useState<1 | -1>(-1);
   const [page, setPage] = useState(0);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [offerFor, setOfferFor] = useState<FreeAgent | null>(null);
 
   // hydrate gmTeam from localStorage on mount
   useEffect(() => {
@@ -269,9 +272,14 @@ export function RecruitmentBoard() {
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
           <div className="eyebrow opacity-60">RECRUITMENT BOARD</div>
-          <div className="display text-[12vw] sm:text-[6vw] leading-[0.85] mt-1">
-            FREE <span className="text-[var(--leather)]">AGENTS</span>
-            <span className="opacity-30"> · {data.season.seasonNumber}</span>
+          <div className="display text-[12vw] sm:text-[6vw] leading-[0.85] mt-1 flex items-baseline flex-wrap gap-x-3">
+            <span>
+              FREE <span className="text-[var(--leather)]">AGENTS</span>
+            </span>
+            <span className="opacity-30">· {data.season.seasonNumber}</span>
+            <span className="font-mono text-xs tracking-widest border border-[var(--leather)] text-[var(--leather)] px-2 py-0.5 self-center">
+              WAVE {data.season.currentWave}
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-3 font-mono text-[10px] tracking-widest">
@@ -298,7 +306,29 @@ export function RecruitmentBoard() {
       </div>
 
       {/* TEAM CARD --------------------------------------------------- */}
-      {gmTeam && <TeamCard abbrev={gmTeam} ranks={data.ranks} />}
+      {gmTeam && (
+        <TeamCard
+          abbrev={gmTeam}
+          ranks={data.ranks}
+          teams={data.teams}
+          ownFAs={data.freeAgents.filter((f) => f.previousTeam === gmTeam)}
+          onRenounce={async (faId, renounced) => {
+            try {
+              await publicApi.renounce(faId, gmTeam, renounced);
+              setData((d) => ({
+                ...d,
+                freeAgents: d.freeAgents.map((f) =>
+                  f.id === faId ? { ...f, renounced } : f,
+                ),
+              }));
+            } catch (err) {
+              setError(
+                err instanceof ApiError ? err.message.toUpperCase() : "RENOUNCE FAILED",
+              );
+            }
+          }}
+        />
+      )}
 
       {/* FILTERS BAR --------------------------------------------------- */}
       <div className="border rule grid grid-cols-1 sm:grid-cols-12 gap-2 p-3">
@@ -445,9 +475,6 @@ export function RecruitmentBoard() {
                     <td className="px-3 py-1.5 text-right tabular-nums font-bold">
                       {f.overall}
                     </td>
-                    <td className="px-3 py-1.5 text-right tabular-nums">
-                      {Number(f.capHold).toFixed(2)}M
-                    </td>
                     <td className="px-3 py-1.5 whitespace-nowrap">
                       <span
                         className={`px-1.5 py-0.5 border text-[9px] ${
@@ -496,8 +523,19 @@ export function RecruitmentBoard() {
                     <td className="px-3 py-1.5 text-right tabular-nums">
                       {f.lengthValue}
                     </td>
-                    <td className="px-3 py-1.5 text-right opacity-50">
-                      {open ? "▾" : "▸"}
+                    <td className="px-3 py-1.5 text-right whitespace-nowrap">
+                      {gmTeam && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOfferFor(f);
+                          }}
+                          className="font-mono text-[10px] tracking-widest px-2 py-1 bg-[var(--leather)] text-[var(--paper)] hover:bg-[var(--leather-2)] transition-colors mr-2"
+                        >
+                          OFFER
+                        </button>
+                      )}
+                      <span className="opacity-50">{open ? "▾" : "▸"}</span>
                     </td>
                   </tr>
                   {open && (
@@ -559,6 +597,17 @@ export function RecruitmentBoard() {
             NEXT →
           </button>
         </div>
+      )}
+
+      {offerFor && gmTeam && (
+        <OfferModal
+          fa={offerFor}
+          teamAbbrev={gmTeam}
+          onClose={() => setOfferFor(null)}
+          onSubmitted={() => {
+            /* fire-and-forget; GMs no longer see offers */
+          }}
+        />
       )}
     </div>
   );

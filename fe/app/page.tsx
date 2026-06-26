@@ -22,12 +22,10 @@ export default function Home() {
 
       {/* masthead ---------------------------------------------------------- */}
       <section className="relative z-10 px-6 sm:px-12 pt-8 pb-4">
-        <div className="display text-[14vw] sm:text-[10vw] leading-[0.78] rise">
-          THE
-          <br />
+        <div className="display text-[10vw] sm:text-[7vw] leading-none rise flex flex-wrap items-baseline gap-x-[0.25em]">
+          <span>THE</span>
           <span className="text-[var(--leather)]">FRONT</span>
-          <br />
-          OFFICE
+          <span>OFFICE</span>
         </div>
       </section>
 
@@ -36,18 +34,16 @@ export default function Home() {
       </div>
 
       {/* recruitment board ------------------------------------------------ */}
-      <section className="relative z-10 px-6 sm:px-12 py-10">
+      <section className="relative z-10 px-3 sm:px-12 py-10">
         <RecruitmentBoard />
       </section>
 
       {/* footer ledger ----------------------------------------------------- */}
       <footer className="relative z-10 border-t rule px-6 sm:px-12 py-5 mt-6">
         <div className="flex flex-wrap items-baseline justify-between gap-4">
-          <div className="eyebrow opacity-70">
-            © FRONT OFFICE — BBGM LEAGUE FA
-          </div>
+          <div className="eyebrow opacity-70">BGMDL League FA</div>
           <div className="font-mono text-xs opacity-70">
-            PRINTED ON RECYCLED OFFER SHEETS
+            Created by NamanDeep
           </div>
         </div>
       </footer>

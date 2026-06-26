@@ -58,4 +58,5 @@ npm run db:push       # diffs schema vs DB and applies (dev shortcut)
 - parse spreadsheet for team values
 - GM offer submission UI on `/`
 - Cap + value calc engine
+  -= automa te signings in league
 - G league automate????????????

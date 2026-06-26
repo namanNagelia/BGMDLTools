@@ -42,6 +42,42 @@ export interface Season {
   leagueLink: string;
   sheetsLink: string | null;
   isCurrentSzn: boolean;
+  currentWave: number;
+}
+
+export interface RosterEntry {
+  pid: number;
+  name: string;
+  pos: string | null;
+  age: number | null;
+  ovr: number | null;
+  contractAmount: number; // millions
+  contractExp: number | null;
+}
+
+export interface TeamRow {
+  id: number;
+  seasonId: number;
+  tid: number;
+  abbrev: string;
+  name: string;
+  totalSalary: string; // numeric — millions
+  roster: RosterEntry[] | null;
+}
+
+export interface OfferWithFlags {
+  id: number;
+  freeAgentId: number;
+  teamAbbrev: string;
+  offerAmount: string;
+  offerLength: number;
+  offerSeason: number;
+  offerGm: string;
+  status: "PENDING" | "ACCEPTED" | "REJECTED" | "WITHDRAWN";
+  createdAt: string;
+  invalidReasons: string[];
+  playerName?: string;
+  playerPreviousTeam?: string;
 }
 
 export interface SheetRow {
@@ -71,7 +107,9 @@ export interface FreeAgent {
   loyaltyValue: number;
   moneyValue: number;
   lengthValue: number;
+  wave: number;
   ratings: Record<string, number | string | null> | null;
+  renounced: boolean;
   winningOfferId: number | null;
 }
 
@@ -176,6 +214,17 @@ export const mod = {
       body: JSON.stringify({ url }),
     });
   },
+
+  async listAllOffers(): Promise<OfferWithFlags[]> {
+    const res = await request<{ offers: OfferWithFlags[] }>("/api/mod/offers");
+    return res.offers;
+  },
+
+  async withdrawOffer(id: number): Promise<void> {
+    await request<{ ok: true }>(`/api/mod/offers/${id}/withdraw`, {
+      method: "POST",
+    });
+  },
 };
 
 // ---- Seasons --------------------------------------------------------------
@@ -241,6 +290,14 @@ export const seasons = {
     });
   },
 
+  async setWave(id: number, wave: 1 | 2): Promise<Season> {
+    const res = await request<{ season: Season }>(
+      `/api/mod/seasons/${id}/wave/${wave}`,
+      { method: "POST" },
+    );
+    return res.season;
+  },
+
   async remove(id: number): Promise<void> {
     await request<{ ok: true }>(`/api/mod/seasons/${id}`, { method: "DELETE" });
   },
@@ -252,11 +309,44 @@ export const publicApi = {
     season: Season | null;
     freeAgents: FreeAgent[];
     ranks: CurrentSeasonRanks;
+    teams: Record<string, TeamRow>;
   }> {
     return request<{
       season: Season | null;
       freeAgents: FreeAgent[];
       ranks: CurrentSeasonRanks;
+      teams: Record<string, TeamRow>;
     }>("/api/seasons/current/fas");
+  },
+
+  async renounce(
+    faId: number,
+    teamAbbrev: string,
+    renounced: boolean,
+  ): Promise<void> {
+    await request<{ ok: true }>(`/api/free-agents/${faId}/renounce`, {
+      method: "POST",
+      body: JSON.stringify({ teamAbbrev, renounced }),
+    });
+  },
+
+  async submitOffer(
+    faId: number,
+    input: { teamAbbrev: string; gm: string; amount: number; years: number },
+  ): Promise<{ offer: OfferWithFlags; invalidReasons: string[] }> {
+    return request<{ offer: OfferWithFlags; invalidReasons: string[] }>(
+      `/api/free-agents/${faId}/offers`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+  },
+
+  async previewOffer(
+    faId: number,
+    input: { teamAbbrev: string; amount: number; years: number },
+  ): Promise<{ hardViolations: string[]; warnings: string[] }> {
+    return request<{ hardViolations: string[]; warnings: string[] }>(
+      `/api/free-agents/${faId}/offers/preview`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
   },
 };

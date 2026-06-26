@@ -111,6 +111,15 @@ export async function deleteSeason(id: number): Promise<boolean> {
   return rows.length > 0;
 }
 
+export async function setSeasonWave(id: number, wave: number): Promise<Season | null> {
+  const [row] = await db
+    .update(seasons)
+    .set({ currentWave: wave })
+    .where(eq(seasons.id, id))
+    .returning();
+  return row ?? null;
+}
+
 /**
  * Pull the BBGM JSON from the link, read the season number out of it, then
  * insert-or-update the season row keyed on season_number.

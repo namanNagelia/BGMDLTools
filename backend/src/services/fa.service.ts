@@ -5,6 +5,7 @@ import {
   legacyRanks,
   marketRanks,
   seasons,
+  teams,
   winningRanks,
 } from "../db/schema.js";
 import { fetchLeagueJson, LeagueFetchError } from "./league.service.js";
@@ -99,6 +100,7 @@ export interface IngestResult {
   unmatchedFromTeamSheet: string[];
   unmatchedFromValuesSheet: string[];
   ratingsAttached: number;
+  teamsInserted: number;
   ranks: {
     market: number;
     legacy: number;
@@ -106,6 +108,106 @@ export interface IngestResult {
     unresolved: number;
     error?: string;
   };
+}
+
+interface RosterEntry {
+  pid: number;
+  name: string;
+  pos: string | null;
+  age: number | null;
+  ovr: number | null;
+  contractAmount: number; // millions
+  contractExp: number | null;
+}
+
+interface TeamPayroll {
+  tid: number;
+  abbrev: string;
+  name: string;
+  totalSalaryMillions: number;
+  roster: RosterEntry[];
+}
+
+function nowYear(): number {
+  // BBGM seasons are stored as years; we don't need precise current year for our purposes
+  return new Date().getUTCFullYear();
+}
+
+/**
+ * Walk BBGM teams + players to compute a per-team roster and payroll.
+ * BBGM contract.amount is in thousands of dollars; we report millions.
+ */
+function buildTeamPayrolls(bbgm: unknown, seasonNumber: number): TeamPayroll[] {
+  if (!bbgm || typeof bbgm !== "object") return [];
+  const d = bbgm as { teams?: unknown; players?: unknown };
+  if (!Array.isArray(d.teams) || !Array.isArray(d.players)) return [];
+
+  const teamMeta = d.teams as Array<{
+    tid?: number;
+    abbrev?: string;
+    region?: string;
+    name?: string;
+  }>;
+  const players = d.players as Array<{
+    pid?: number;
+    tid?: number;
+    name?: string;
+    firstName?: string;
+    lastName?: string;
+    born?: { year?: number };
+    contract?: { amount?: number; exp?: number };
+    ratings?: Array<{ season?: number; pos?: string; ovr?: number }>;
+  }>;
+
+  const rosterByTid = new Map<number, RosterEntry[]>();
+  for (const p of players) {
+    if (typeof p?.tid !== "number" || p.tid < 0) continue;
+    const list = rosterByTid.get(p.tid) ?? [];
+
+    const fullName =
+      typeof p.name === "string" && p.name
+        ? p.name
+        : `${p.firstName ?? ""} ${p.lastName ?? ""}`.trim();
+
+    // most recent ratings (or matching season)
+    let pos: string | null = null;
+    let ovr: number | null = null;
+    if (Array.isArray(p.ratings) && p.ratings.length) {
+      const exact = p.ratings.find((r) => r?.season === seasonNumber);
+      const pick = exact ?? p.ratings[p.ratings.length - 1];
+      pos = pick?.pos ?? null;
+      ovr = typeof pick?.ovr === "number" ? pick.ovr : null;
+    }
+
+    const age = p.born?.year ? nowYear() - p.born.year : null;
+    const amt = p.contract?.amount ?? 0;
+
+    list.push({
+      pid: p.pid ?? -1,
+      name: fullName || "—",
+      pos,
+      age,
+      ovr,
+      contractAmount: amt / 1000,
+      contractExp: p.contract?.exp ?? null,
+    });
+    rosterByTid.set(p.tid, list);
+  }
+
+  const out: TeamPayroll[] = [];
+  for (const t of teamMeta) {
+    if (typeof t.tid !== "number" || t.tid < 0 || !t.abbrev) continue;
+    const roster = rosterByTid.get(t.tid) ?? [];
+    const totalSalary = roster.reduce((s, r) => s + r.contractAmount, 0);
+    out.push({
+      tid: t.tid,
+      abbrev: t.abbrev,
+      name: `${t.region ?? ""} ${t.name ?? ""}`.trim() || t.abbrev,
+      totalSalaryMillions: totalSalary,
+      roster: roster.sort((a, b) => b.contractAmount - a.contractAmount),
+    });
+  }
+  return out;
 }
 
 export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> {
@@ -185,6 +287,17 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     if (!teamByName.has(key)) unmatchedFromTeam.push(v.Name ?? key);
   }
 
+  // teams: build from BBGM
+  const teamPayrolls = buildTeamPayrolls(bbgm, season.seasonNumber);
+  const teamRows = teamPayrolls.map((t) => ({
+    seasonId: season.id,
+    tid: t.tid,
+    abbrev: t.abbrev,
+    name: t.name,
+    totalSalary: t.totalSalaryMillions.toFixed(2),
+    roster: t.roster,
+  }));
+
   // shape rank rows for replace-insert
   const marketRows = ranks.market.map((m) => ({
     seasonId: season.id,
@@ -216,7 +329,7 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     ranks.legacy.filter((r) => r.abbrev === "?").length +
     ranks.winning.filter((w) => w.abbrev === "?").length;
 
-  // replace existing FAs + ranks for this season (idempotent re-ingest)
+  // replace existing FAs + ranks + teams for this season (idempotent re-ingest)
   await db.transaction(async (tx) => {
     await tx.delete(freeAgents).where(eq(freeAgents.seasonId, season.id));
     if (rowsToInsert.length) await tx.insert(freeAgents).values(rowsToInsert);
@@ -227,6 +340,9 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     if (marketRows.length) await tx.insert(marketRanks).values(marketRows);
     if (legacyRows.length) await tx.insert(legacyRanks).values(legacyRows);
     if (winningRows.length) await tx.insert(winningRanks).values(winningRows);
+
+    await tx.delete(teams).where(eq(teams.seasonId, season.id));
+    if (teamRows.length) await tx.insert(teams).values(teamRows);
   });
 
   return {
@@ -237,6 +353,7 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     unmatchedFromTeamSheet: unmatchedFromTeam,
     unmatchedFromValuesSheet: unmatchedFromValues,
     ratingsAttached,
+    teamsInserted: teamRows.length,
     ranks: {
       market: marketRows.length,
       legacy: legacyRows.length,
@@ -251,6 +368,28 @@ export async function listFreeAgentsForSeason(seasonId: number) {
   return db.select().from(freeAgents).where(eq(freeAgents.seasonId, seasonId));
 }
 
+/**
+ * Toggle renounced on a free agent. Only the team that holds the player's
+ * Bird/RFA rights (i.e. their previousTeam) may renounce — server validates.
+ */
+export async function setRenounced(
+  faId: number,
+  teamAbbrev: string,
+  renounced: boolean,
+): Promise<{ ok: true } | { error: string; status: number }> {
+  const [fa] = await db
+    .select()
+    .from(freeAgents)
+    .where(eq(freeAgents.id, faId))
+    .limit(1);
+  if (!fa) return { error: "free_agent_not_found", status: 404 };
+  if (fa.previousTeam !== teamAbbrev) {
+    return { error: "not_your_player", status: 403 };
+  }
+  await db.update(freeAgents).set({ renounced }).where(eq(freeAgents.id, faId));
+  return { ok: true };
+}
+
 export async function listFreeAgentsForCurrentSeason() {
   const [current] = await db
     .select()
@@ -262,14 +401,16 @@ export async function listFreeAgentsForCurrentSeason() {
       season: null,
       freeAgents: [],
       ranks: { market: {}, legacy: {}, winning: {} },
+      teams: {},
     };
   }
 
-  const [rows, market, legacy, winning] = await Promise.all([
+  const [rows, market, legacy, winning, teamRows] = await Promise.all([
     listFreeAgentsForSeason(current.id),
     db.select().from(marketRanks).where(eq(marketRanks.seasonId, current.id)),
     db.select().from(legacyRanks).where(eq(legacyRanks.seasonId, current.id)),
     db.select().from(winningRanks).where(eq(winningRanks.seasonId, current.id)),
+    db.select().from(teams).where(eq(teams.seasonId, current.id)),
   ]);
 
   return {
@@ -280,5 +421,6 @@ export async function listFreeAgentsForCurrentSeason() {
       legacy: Object.fromEntries(legacy.map((l) => [l.teamAbbrev, l])),
       winning: Object.fromEntries(winning.map((w) => [w.teamAbbrev, w])),
     },
+    teams: Object.fromEntries(teamRows.map((t) => [t.abbrev, t])),
   };
 }
