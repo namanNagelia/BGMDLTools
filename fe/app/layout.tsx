@@ -19,8 +19,8 @@ const mono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Front Office — League FA",
-  description: "Mod tools for the league free-agency cycle.",
+  title: "BGMDL",
+  description: "BGMDL FA",
 };
 
 export default function RootLayout({
