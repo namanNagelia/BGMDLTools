@@ -7,9 +7,6 @@ export default function Home() {
       {/* edition bar ------------------------------------------------------- */}
       <header className="relative z-10 border-b rule px-6 pt-6 pb-3 sm:px-12">
         <div className="flex items-baseline justify-between gap-4">
-          <div className="eyebrow">
-            VOL. I &nbsp;·&nbsp; NO. 001 &nbsp;·&nbsp; OFFSEASON EDITION
-          </div>
           <Link
             href="/mod"
             className="eyebrow hidden sm:inline-flex items-baseline gap-2 underline decoration-[var(--leather)] decoration-2 underline-offset-4 hover:text-[var(--leather)] transition-colors"
