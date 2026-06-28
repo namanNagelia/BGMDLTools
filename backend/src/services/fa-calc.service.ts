@@ -77,6 +77,9 @@ function num(v: unknown, fb = 0): number {
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
+/** Market and legacy are category matches, not scaled values — flat award on match. */
+const CATEGORY_MATCH_POINTS = 3;
+
 interface PoolTeam {
   abbrev: string;
   marketRank: number | null;
@@ -109,7 +112,7 @@ function buildPoolTeam(
   };
 }
 
-/** Win = team's market tier matches the player's market value. 0 → nobody scores. */
+/** Category match: team's market tier == player's market value → flat 3 pts. 0 → nobody scores. */
 function scoreMarket(playerValue: number, team: PoolTeam): ValueLine {
   const m = MULTIPLIERS.market;
   if (playerValue === 0) {
@@ -130,11 +133,11 @@ function scoreMarket(playerValue: number, team: PoolTeam): ValueLine {
     baseMultiplier: m,
     effectiveMultiplier: m,
     won,
-    points: won ? r2(playerValue * m) : 0,
+    points: won ? CATEGORY_MATCH_POINTS : 0,
   };
 }
 
-/** Win = team's legacy tier matches the player's legacy value. 0 → nobody scores. */
+/** Category match: team's legacy tier == player's legacy value → flat 3 pts. 0 → nobody scores. */
 function scoreLegacy(playerValue: number, team: PoolTeam): ValueLine {
   const m = MULTIPLIERS.legacy;
   if (playerValue === 0) {
@@ -155,7 +158,7 @@ function scoreLegacy(playerValue: number, team: PoolTeam): ValueLine {
     baseMultiplier: m,
     effectiveMultiplier: m,
     won,
-    points: won ? r2(playerValue * m) : 0,
+    points: won ? CATEGORY_MATCH_POINTS : 0,
   };
 }
 
