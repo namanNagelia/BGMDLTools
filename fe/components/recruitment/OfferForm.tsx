@@ -134,12 +134,12 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
               <input
                 type="number"
                 inputMode="decimal"
-                step="0.1"
+                step="0.01"
                 min="0.5"
                 required
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder="8.0"
+                placeholder="8.00"
                 className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm tabular-nums focus:border-[var(--leather)] transition-colors"
               />
             </label>

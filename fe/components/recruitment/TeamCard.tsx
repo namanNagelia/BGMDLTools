@@ -24,6 +24,12 @@ const TIER_LABEL: Record<number, string> = {
   1: "MICRO",
 };
 
+const LEGACY_LABEL: Record<number, string> = {
+  1: "LOW",
+  2: "MED",
+  3: "HIGH",
+};
+
 const SOFT_CAP = 100; // $M
 const HARD_CAP = 130; // $M
 const MLE1_FLOOR = 92.5;
@@ -385,9 +391,11 @@ export function TeamCard({ abbrev, ranks, teams, ownFAs, onRenounce }: Props) {
           {legacy ? (
             <div className="mt-1 space-y-1">
               <div className="flex items-baseline gap-2">
-                <span className="display text-3xl leading-none">{legacy.tier}</span>
+                <span className="display text-3xl leading-none">
+                  {LEGACY_LABEL[legacy.tier] ?? legacy.tier}
+                </span>
                 <span className="font-mono text-[10px] tracking-widest opacity-70">
-                  TIER
+                  LEGACY
                 </span>
               </div>
               <div className="font-mono text-[11px] flex gap-3 mt-1">

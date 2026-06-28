@@ -18,6 +18,19 @@
   /* default theme: ink bg, paper text */
   --background: var(--ink);
   --foreground: var(--paper);
+
+  /* tell the browser our UI is dark so native <select> dropdowns,
+     scrollbars, etc. render with dark system chrome instead of
+     white-on-white on Windows */
+  color-scheme: dark;
+}
+
+/* native <option> elements use system colors by default — on Windows
+   that's white-on-white against our dark <select>. Force ink bg / paper
+   text so the dropdown list is legible on every platform. */
+select option {
+  background-color: var(--ink);
+  color: var(--paper);
 }
 
 @theme inline {
