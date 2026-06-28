@@ -108,6 +108,35 @@ export async function deleteSeason(id: number): Promise<boolean> {
   return rows.length > 0;
 }
 
+/**
+ * Wipe FA activity for a season — every offer, every renouncement, every signing.
+ * Cap holds reappear, signed players go back to UFA. Sheet/BBGM data on the
+ * season itself is untouched; re-ingest to restore RFA distinctions from the sheet.
+ */
+export async function resetSeasonFA(id: number): Promise<{
+  deletedOffers: number;
+  resetFAs: number;
+}> {
+  return db.transaction(async (tx) => {
+    const delOffers = await tx
+      .delete(offers)
+      .where(eq(offers.offerSeason, id))
+      .returning({ id: offers.id });
+
+    const resetFAs = await tx
+      .update(freeAgents)
+      .set({
+        renounced: false,
+        winningOfferId: null,
+        faStatus: sql`CASE WHEN ${freeAgents.faStatus} = 'SIGNED' THEN 'UFA'::fa_status ELSE ${freeAgents.faStatus} END`,
+      })
+      .where(eq(freeAgents.seasonId, id))
+      .returning({ id: freeAgents.id });
+
+    return { deletedOffers: delOffers.length, resetFAs: resetFAs.length };
+  });
+}
+
 /** Flip the season's wave; entering wave 2 converts unoffered RFAs to UFAs. */
 export async function setSeasonWave(
   id: number,

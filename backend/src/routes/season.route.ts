@@ -14,6 +14,7 @@ router.post("/:id/current", controller.setCurrent);
 router.post("/:id/wave/:wave", controller.setWave);
 router.post("/:id/parse-sheets", controller.parseSheets);
 router.post("/:id/ingest-fas", controller.ingestFAs);
+router.post("/:id/reset-fa", controller.reset);
 router.delete("/:id", controller.remove);
 
 export default router;

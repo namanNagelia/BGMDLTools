@@ -58,6 +58,35 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
   // wave
   const [wavingTo, setWavingTo] = useState<1 | 2 | null>(null);
 
+  // reset
+  const [resetting, setResetting] = useState(false);
+
+  async function handleReset() {
+    const ok1 = window.confirm(
+      `RESET SEASON ${season.seasonNumber}?\n\n` +
+        `This wipes ALL offers, renouncements, and signings for this season.\n` +
+        `Cap holds reappear. Signed players become UFA again.\n\n` +
+        `BBGM and Sheets data on this season ROW are untouched — you can re-ingest after.`,
+    );
+    if (!ok1) return;
+    const ok2 = window.confirm(
+      `Are you ABSOLUTELY sure?\n\nThis is irreversible — every accepted/pending/rejected offer is deleted.`,
+    );
+    if (!ok2) return;
+    setResetting(true);
+    try {
+      const r = await seasonsApi.resetFA(season.id);
+      onError(
+        `RESET DONE · ${r.deletedOffers} OFFERS WIPED · ${r.resetFAs} FAs CLEARED`,
+      );
+      await onChanged();
+    } catch (err) {
+      onError(err instanceof ApiError ? err.message.toUpperCase() : "RESET FAILED");
+    } finally {
+      setResetting(false);
+    }
+  }
+
   async function handlePullJson() {
     setMode("json");
     setJsonState({ loading: true });
@@ -407,6 +436,21 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
               </>
             ) : (
               `WAVE ${season.currentWave}`
+            )}
+          </button>
+          <button
+            onClick={handleReset}
+            disabled={resetting}
+            title="Wipe all offers + renouncements + signings for this season (2-step confirm)"
+            className="font-mono text-[10px] tracking-widest px-2 py-1 border border-[var(--leather)] text-[var(--leather)] opacity-80 hover:opacity-100 hover:bg-[var(--leather)] hover:text-[var(--paper)] disabled:opacity-40 transition-colors flex items-center gap-1.5"
+          >
+            {resetting ? (
+              <>
+                <span className="spinner" />
+                <span>RESET…</span>
+              </>
+            ) : (
+              "RESET FA"
             )}
           </button>
           {confirmDel ? (

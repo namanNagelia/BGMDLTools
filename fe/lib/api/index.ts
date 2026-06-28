@@ -381,6 +381,13 @@ export const seasons = {
     );
   },
 
+  async resetFA(id: number): Promise<{ deletedOffers: number; resetFAs: number }> {
+    return request<{ deletedOffers: number; resetFAs: number }>(
+      `/api/mod/seasons/${id}/reset-fa`,
+      { method: "POST" },
+    );
+  },
+
   async remove(id: number): Promise<void> {
     await request<{ ok: true }>(`/api/mod/seasons/${id}`, { method: "DELETE" });
   },
