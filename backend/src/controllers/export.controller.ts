@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import { z } from "zod";
-import { buildSignedExport } from "../services/export.service.js";
+import { streamSignedExport } from "../services/export.service.js";
 
 const idParam = z.coerce.number().int().positive();
 
@@ -15,13 +15,9 @@ export async function downloadSignedExport(
     return;
   }
   try {
-    const { filename, buffer, signed, unmatched } = await buildSignedExport(id.data);
-    res.setHeader("Content-Type", "application/gzip");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.setHeader("X-Signed-Count", String(signed));
-    res.setHeader("X-Unmatched-Count", String(unmatched.length));
-    res.end(buffer);
+    await streamSignedExport(id.data, res);
   } catch (err) {
-    next(err);
+    if (!res.headersSent) return next(err);
+    res.destroy(err as Error);
   }
 }

@@ -32,17 +32,18 @@ export function OffersInbox() {
   const [currentSeasonNumber, setCurrentSeasonNumber] = useState<number | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [downloadInfo, setDownloadInfo] = useState<string | null>(null);
+  const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
 
   async function handleDownload() {
     if (currentSeasonId == null) return;
     setDownloading(true);
     setDownloadInfo("FETCHING LEAGUE EXPORT…");
+    setFallbackUrl(null);
+    const url = mod.signedExportUrl(currentSeasonId);
     try {
-      const url = mod.signedExportUrl(currentSeasonId);
       const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const signed = res.headers.get("X-Signed-Count") ?? "?";
-      const unmatched = res.headers.get("X-Unmatched-Count") ?? "0";
       setDownloadInfo("PACKAGING…");
       const blob = await res.blob();
       const objUrl = URL.createObjectURL(blob);
@@ -53,13 +54,12 @@ export function OffersInbox() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(objUrl);
-      setDownloadInfo(
-        `✓ DOWNLOADED · ${signed} SIGNED${Number(unmatched) > 0 ? ` · ${unmatched} UNMATCHED` : ""}`,
-      );
+      setDownloadInfo(`✓ DOWNLOADED · ${signed} SIGNED`);
       setTimeout(() => setDownloadInfo(null), 6000);
     } catch (err) {
       setDownloadInfo(null);
       setError(err instanceof Error ? err.message.toUpperCase() : "DOWNLOAD FAILED");
+      setFallbackUrl(url);
     } finally {
       setDownloading(false);
     }
@@ -236,6 +236,21 @@ export function OffersInbox() {
       {error && (
         <div className="border-l-2 border-[var(--leather)] pl-3 py-1 font-mono text-xs text-[var(--leather)] mb-4">
           {error}
+          {fallbackUrl && (
+            <div className="mt-1">
+              <a
+                href={fallbackUrl}
+                download={`BGMDL_${currentSeasonNumber ?? "current"}_post_FA.json.gz`}
+                className="underline hover:no-underline opacity-90 hover:opacity-100"
+              >
+                ↗ DOWNLOAD MANUALLY
+              </a>
+              <span className="opacity-60 ml-2">
+                (opens the export URL directly — works even if the in-page
+                download fails on your network)
+              </span>
+            </div>
+          )}
         </div>
       )}
 

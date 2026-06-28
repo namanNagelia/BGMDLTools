@@ -13,6 +13,7 @@ app.use(
   cors({
     origin: config.ALLOWED_ORIGIN,
     credentials: true,
+    exposedHeaders: ["X-Signed-Count"],
   }),
 );
 app.use(express.json({ limit: "1mb" }));
