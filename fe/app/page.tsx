@@ -17,19 +17,6 @@ export default function Home() {
         <div className="seam mt-3" />
       </header>
 
-      {/* masthead ---------------------------------------------------------- */}
-      <section className="relative z-10 px-6 sm:px-12 pt-8 pb-4">
-        <div className="display text-[10vw] sm:text-[7vw] leading-none rise flex flex-wrap items-baseline gap-x-[0.25em]">
-          <span>THE</span>
-          <span className="text-[var(--leather)]">FRONT</span>
-          <span>OFFICE</span>
-        </div>
-      </section>
-
-      <div className="relative z-10 px-6 sm:px-12">
-        <div className="seam" />
-      </div>
-
       {/* recruitment board ------------------------------------------------ */}
       <section className="relative z-10 px-3 sm:px-12 py-10">
         <RecruitmentBoard />

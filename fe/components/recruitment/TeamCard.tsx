@@ -14,6 +14,7 @@ interface Props {
   teams: Record<string, TeamRow>;
   ownFAs: FreeAgent[];
   onRenounce: (faId: number, renounced: boolean) => Promise<void>;
+  view?: "roster" | "fa";
 }
 
 const TIER_LABEL: Record<number, string> = {
@@ -39,7 +40,14 @@ function fmt(n: number, suffix = "M"): string {
   return `${n >= 0 ? "" : "−"}$${Math.abs(n).toFixed(1)}${suffix}`;
 }
 
-export function TeamCard({ abbrev, ranks, teams, ownFAs, onRenounce }: Props) {
+export function TeamCard({
+  abbrev,
+  ranks,
+  teams,
+  ownFAs,
+  onRenounce,
+  view = "fa",
+}: Props) {
   const market = ranks.market[abbrev];
   const legacy = ranks.legacy[abbrev];
   const winning = ranks.winning[abbrev];
@@ -169,7 +177,7 @@ export function TeamCard({ abbrev, ranks, teams, ownFAs, onRenounce }: Props) {
       </div>
 
       {/* OWN FAs WITH CAP HOLDS */}
-      {ownFAs.length > 0 && (
+      {view === "roster" && ownFAs.length > 0 && (
         <Disclosure
           title="MANAGE RENOUNCEMENTS"
           subtitle={`${ownFAs.length} expiring FA${ownFAs.length === 1 ? "" : "s"}`}
@@ -287,6 +295,7 @@ export function TeamCard({ abbrev, ranks, teams, ownFAs, onRenounce }: Props) {
       )}
 
       {/* ELIGIBILITY HINTS */}
+      {view === "fa" && (
       <div className="border rule p-3 mb-3 font-mono text-[11px] tracking-widest flex flex-wrap items-center gap-x-4 gap-y-1">
         <span className="eyebrow opacity-60">YOU CAN OFFER:</span>
         <span>
@@ -316,14 +325,15 @@ export function TeamCard({ abbrev, ranks, teams, ownFAs, onRenounce }: Props) {
           </span>
         )}
       </div>
+      )}
 
       {/* CURRENT ROSTER */}
-      {roster.length > 0 && (
+      {view === "roster" && roster.length > 0 && (
         <Disclosure
           title="CURRENT ROSTER"
           subtitle={`${roster.length} players`}
           flag={<>PAYROLL · {fmt(salary)}</>}
-          defaultOpen={false}
+          defaultOpen={true}
         >
           <div className="border rule overflow-x-auto max-h-72 overflow-y-auto">
             <table className="w-full font-mono text-xs min-w-[520px]">
@@ -364,6 +374,7 @@ export function TeamCard({ abbrev, ranks, teams, ownFAs, onRenounce }: Props) {
       )}
 
       {/* THREE STAT CARDS */}
+      {view === "fa" && (
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {/* MARKET */}
         <div className="border rule p-3">
@@ -458,6 +469,7 @@ export function TeamCard({ abbrev, ranks, teams, ownFAs, onRenounce }: Props) {
           )}
         </div>
       </div>
+      )}
     </div>
   );
 }

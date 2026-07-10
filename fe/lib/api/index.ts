@@ -109,6 +109,7 @@ export interface FreeAgent {
   moneyValue: number;
   lengthValue: number;
   wave: number;
+  source: "SHEET" | "BBGM_ONLY";
   ratings: Record<string, number | string | null> | null;
   renounced: boolean;
   winningOfferId: number | null;
@@ -147,6 +148,7 @@ export interface IngestResult {
   unmatchedFromTeamSheet: string[];
   unmatchedFromValuesSheet: string[];
   ratingsAttached: number;
+  bbgmOnlyInserted: number;
   ranks: {
     market: number;
     legacy: number;
@@ -288,6 +290,7 @@ export interface CalcResult {
     overall: number;
     faStatus: string;
     previousTeam: string;
+    source: string;
     values: {
       market: number;
       legacy: number;
@@ -425,7 +428,7 @@ export const publicApi = {
     input: {
       teamAbbrev: string;
       gm: string;
-      codeWord?: string;
+      codeWord: string;
       amount: number;
       years: number;
     },
@@ -434,6 +437,32 @@ export const publicApi = {
       `/api/free-agents/${faId}/offers`,
       { method: "POST", body: JSON.stringify(input) },
     );
+  },
+
+  async lookupMyOffers(codeWord: string): Promise<OfferWithFlags[]> {
+    const res = await request<{ offers: OfferWithFlags[] }>("/api/offers/lookup", {
+      method: "POST",
+      body: JSON.stringify({ codeWord }),
+    });
+    return res.offers;
+  },
+
+  async editMyOffer(
+    id: number,
+    codeWord: string,
+    patch: { amount?: number; years?: number },
+  ): Promise<{ offer: OfferWithFlags; invalidReasons: string[] }> {
+    return request<{ offer: OfferWithFlags; invalidReasons: string[] }>(
+      `/api/offers/${id}`,
+      { method: "PATCH", body: JSON.stringify({ codeWord, ...patch }) },
+    );
+  },
+
+  async withdrawMyOffer(id: number, codeWord: string): Promise<void> {
+    await request<{ ok: true }>(`/api/offers/${id}/withdraw`, {
+      method: "POST",
+      body: JSON.stringify({ codeWord }),
+    });
   },
 
   async previewOffer(

@@ -11,6 +11,7 @@ import {
 import { TeamCard } from "./TeamCard";
 import { OfferModal } from "./OfferModal";
 import { HowToPanel } from "../HowToPanel";
+import { MyOffersPanel } from "./MyOffersPanel";
 
 const TEAM_STORAGE_KEY = "gmTeamAbbrev";
 
@@ -111,6 +112,7 @@ export function RecruitmentBoard() {
   const [page, setPage] = useState(0);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [offerFor, setOfferFor] = useState<FreeAgent | null>(null);
+  const [tab, setTab] = useState<"roster" | "fa">("fa");
 
   // hydrate gmTeam from localStorage on mount
   useEffect(() => {
@@ -317,15 +319,14 @@ export function RecruitmentBoard() {
           },
         ]}
       />
-      {/* HEADER STRIP -------------------------------------------------- */}
+      {/* HEADER + TEAM PICKER ---------------------------------------- */}
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
           <div className="eyebrow opacity-60">RECRUITMENT BOARD</div>
-          <div className="display text-[12vw] sm:text-[6vw] leading-[0.85] mt-1 flex items-baseline flex-wrap gap-x-3">
+          <div className="display text-[10vw] sm:text-[5vw] leading-[0.85] mt-1 flex items-baseline flex-wrap gap-x-3">
             <span>
-              FREE <span className="text-[var(--leather)]">AGENTS</span>
+              SEASON <span className="text-[var(--leather)]">{data.season.seasonNumber}</span>
             </span>
-            <span className="opacity-30">· {data.season.seasonNumber}</span>
             <span className="font-mono text-xs tracking-widest border border-[var(--leather)] text-[var(--leather)] px-2 py-0.5 self-center">
               WAVE {data.season.currentWave}
             </span>
@@ -345,39 +346,97 @@ export function RecruitmentBoard() {
               </option>
             ))}
           </select>
-          <div className="opacity-50 text-right hidden sm:block">
-            {sorted.length} OF {data.freeAgents.length}
-            <br />
-            {data.freeAgents.filter((f) => f.faStatus === "UFA").length} UFA ·{" "}
-            {data.freeAgents.filter((f) => f.faStatus === "RFA").length} RFA
-          </div>
         </div>
       </div>
 
-      {/* TEAM CARD --------------------------------------------------- */}
-      {gmTeam && (
-        <TeamCard
-          abbrev={gmTeam}
-          ranks={data.ranks}
-          teams={data.teams}
-          ownFAs={data.freeAgents.filter((f) => f.previousTeam === gmTeam)}
-          onRenounce={async (faId, renounced) => {
-            try {
-              await publicApi.renounce(faId, gmTeam, renounced);
-              setData((d) => ({
-                ...d,
-                freeAgents: d.freeAgents.map((f) =>
-                  f.id === faId ? { ...f, renounced } : f,
-                ),
-              }));
-            } catch (err) {
-              setError(
-                err instanceof ApiError ? err.message.toUpperCase() : "RENOUNCE FAILED",
-              );
-            }
-          }}
-        />
-      )}
+      {/* TABS ---------------------------------------------------------- */}
+      <div className="flex border-b rule">
+        {(
+          [
+            { key: "roster" as const, label: "MY ROSTER" },
+            { key: "fa" as const, label: "FREE AGENCY" },
+          ]
+        ).map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`px-4 sm:px-6 py-3 font-mono text-xs tracking-widest border-b-2 -mb-[2px] transition-colors ${
+              tab === t.key
+                ? "border-[var(--leather)] text-[var(--leather)]"
+                : "border-transparent opacity-60 hover:opacity-100"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ROSTER TAB --------------------------------------------------- */}
+      {tab === "roster" &&
+        (gmTeam ? (
+          <TeamCard
+            abbrev={gmTeam}
+            ranks={data.ranks}
+            teams={data.teams}
+            ownFAs={data.freeAgents.filter((f) => f.previousTeam === gmTeam)}
+            view="roster"
+            onRenounce={async (faId, renounced) => {
+              try {
+                await publicApi.renounce(faId, gmTeam, renounced);
+                setData((d) => ({
+                  ...d,
+                  freeAgents: d.freeAgents.map((f) =>
+                    f.id === faId ? { ...f, renounced } : f,
+                  ),
+                }));
+              } catch (err) {
+                setError(
+                  err instanceof ApiError ? err.message.toUpperCase() : "RENOUNCE FAILED",
+                );
+              }
+            }}
+          />
+        ) : (
+          <div className="border-2 border-dashed border-[color:var(--rule-soft)] py-12 text-center font-mono text-xs tracking-widest opacity-60">
+            PICK YOUR TEAM ABOVE TO SEE YOUR ROSTER + MANAGE RENOUNCEMENTS
+          </div>
+        ))}
+
+      {/* FA TAB ------------------------------------------------------- */}
+      {tab === "fa" && (
+        <>
+          <MyOffersPanel />
+
+          {gmTeam && (
+            <TeamCard
+              abbrev={gmTeam}
+              ranks={data.ranks}
+              teams={data.teams}
+              ownFAs={data.freeAgents.filter((f) => f.previousTeam === gmTeam)}
+              view="fa"
+              onRenounce={async (faId, renounced) => {
+                try {
+                  await publicApi.renounce(faId, gmTeam, renounced);
+                  setData((d) => ({
+                    ...d,
+                    freeAgents: d.freeAgents.map((f) =>
+                      f.id === faId ? { ...f, renounced } : f,
+                    ),
+                  }));
+                } catch (err) {
+                  setError(
+                    err instanceof ApiError ? err.message.toUpperCase() : "RENOUNCE FAILED",
+                  );
+                }
+              }}
+            />
+          )}
+
+          <div className="font-mono text-[10px] tracking-widest opacity-50 text-right">
+            {sorted.length} OF {data.freeAgents.length} FAs ·{" "}
+            {data.freeAgents.filter((f) => f.faStatus === "UFA").length} UFA ·{" "}
+            {data.freeAgents.filter((f) => f.faStatus === "RFA").length} RFA
+          </div>
 
       {/* FILTERS BAR --------------------------------------------------- */}
       <div className="border rule grid grid-cols-1 sm:grid-cols-12 gap-2 p-3">
@@ -513,7 +572,17 @@ export function RecruitmentBoard() {
                     className="border-b rule hover:bg-[color:var(--ink-2)] cursor-pointer transition-colors"
                     onClick={() => setExpandedId(open ? null : f.id)}
                   >
-                    <td className="px-3 py-1.5 whitespace-nowrap">{f.name}</td>
+                    <td className="px-3 py-1.5 whitespace-nowrap">
+                      {f.name}
+                      {f.source === "BBGM_ONLY" && (
+                        <span
+                          className="ml-2 px-1.5 py-0.5 border border-[var(--mustard)] text-[var(--mustard)] text-[9px] tracking-widest"
+                          title="Not in the values sheet — mods pick the signing manually."
+                        >
+                          MOD
+                        </span>
+                      )}
+                    </td>
                     <td className="px-3 py-1.5 whitespace-nowrap opacity-80">
                       {f.previousTeam}
                     </td>
@@ -646,6 +715,8 @@ export function RecruitmentBoard() {
             NEXT →
           </button>
         </div>
+      )}
+        </>
       )}
 
       {offerFor && gmTeam && (

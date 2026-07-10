@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { freeAgents, offers, seasons, teams } from "../db/schema.js";
 import { LeagueFetchError } from "./league.service.js";
@@ -244,7 +244,7 @@ export async function createOffer(input: {
   amount: number;
   years: number;
   gm: string;
-  codeWord?: string;
+  codeWord: string;
 }): Promise<{ offer: Offer; invalidReasons: string[] }> {
   const [fa] = await db
     .select()
@@ -265,7 +265,7 @@ export async function createOffer(input: {
       offerLength: input.years,
       offerSeason: fa.seasonId,
       offerGm: input.gm,
-      codeWord: input.codeWord?.trim() || null,
+      codeWord: input.codeWord.trim(),
     })
     .returning();
 
@@ -370,6 +370,114 @@ export async function listAllOffersForCurrentSeason(): Promise<OfferWithFlags[]>
     .where(eq(offers.offerSeason, current.id))
     .orderBy(desc(offers.createdAt));
   return annotate(rows);
+}
+
+/** Find all PENDING offers for the current season whose codeWord matches (case-insensitive). */
+export async function listOffersByCode(code: string): Promise<OfferWithFlags[]> {
+  const trimmed = code.trim();
+  if (!trimmed) return [];
+  const [current] = await db
+    .select()
+    .from(seasons)
+    .where(eq(seasons.isCurrentSzn, true))
+    .limit(1);
+  if (!current) return [];
+  const rows = await db
+    .select()
+    .from(offers)
+    .where(
+      and(
+        eq(offers.offerSeason, current.id),
+        eq(offers.status, "PENDING"),
+        sql`LOWER(${offers.codeWord}) = LOWER(${trimmed})`,
+      ),
+    )
+    .orderBy(desc(offers.createdAt));
+  return annotate(rows);
+}
+
+async function loadOfferIfCodeMatches(
+  id: number,
+  code: string,
+): Promise<Offer | null> {
+  const trimmed = code.trim();
+  if (!trimmed) return null;
+  const [row] = await db.select().from(offers).where(eq(offers.id, id)).limit(1);
+  if (!row) return null;
+  if (!row.codeWord) return null;
+  if (row.codeWord.toLowerCase() !== trimmed.toLowerCase()) return null;
+  return row;
+}
+
+/** GM updates their own offer (amount and/or years). Code must match the original offer. */
+export async function updateOfferByCode(
+  id: number,
+  code: string,
+  patch: { amount?: number; years?: number },
+): Promise<{ offer: Offer; invalidReasons: string[] } | null> {
+  const original = await loadOfferIfCodeMatches(id, code);
+  if (!original) return null;
+  if (original.status !== "PENDING") return null;
+
+  const [fa] = await db
+    .select()
+    .from(freeAgents)
+    .where(eq(freeAgents.id, original.freeAgentId))
+    .limit(1);
+  if (!fa) return null;
+
+  const newAmount = patch.amount ?? Number(original.offerAmount);
+  const newYears = patch.years ?? original.offerLength;
+
+  const hardViolations = computeHardViolations(fa, newAmount, newYears);
+  if (hardViolations.length > 0) throw new OfferValidationError(hardViolations);
+
+  const [updated] = await db
+    .update(offers)
+    .set({
+      offerAmount: newAmount.toFixed(2),
+      offerLength: newYears,
+    })
+    .where(eq(offers.id, id))
+    .returning();
+
+  const ctx = await loadTeamCapContext(original.teamAbbrev);
+  let invalidReasons: string[] = [];
+  if (ctx) {
+    const payroll = ctx.team ? Number(ctx.team.totalSalary) : 0;
+    const activeCapHolds = ctx.ownFAs
+      .filter((f) => !f.renounced)
+      .reduce((s, f) => s + Number(f.capHold), 0);
+    const pending = await pendingOffersForTeam(original.teamAbbrev, fa.seasonId);
+    const otherOfferTotal = pending
+      .filter((o) => o.id !== id && o.freeAgentId !== fa.id)
+      .reduce((s, o) => s + Number(o.offerAmount), 0);
+    invalidReasons = computeInvalidReasons({
+      fa,
+      teamAbbrev: original.teamAbbrev,
+      amount: newAmount,
+      years: newYears,
+      payroll,
+      activeCapHolds,
+      otherOfferTotal,
+    });
+  }
+  return { offer: updated, invalidReasons };
+}
+
+/** GM withdraws their own offer. Code must match. */
+export async function withdrawOfferByCode(
+  id: number,
+  code: string,
+): Promise<boolean> {
+  const original = await loadOfferIfCodeMatches(id, code);
+  if (!original) return false;
+  if (original.status !== "PENDING") return false;
+  await db
+    .update(offers)
+    .set({ status: "WITHDRAWN" })
+    .where(eq(offers.id, id));
+  return true;
 }
 
 export async function modWithdrawOffer(id: number): Promise<boolean> {

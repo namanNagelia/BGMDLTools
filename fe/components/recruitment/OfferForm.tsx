@@ -79,13 +79,18 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
       setSubmitError("AMOUNT AND YEARS REQUIRED");
       return;
     }
+    const codeTrim = codeWord.trim();
+    if (!codeTrim) {
+      setSubmitError("CODE WORD REQUIRED");
+      return;
+    }
     setSubmitting(true);
     setSubmitError(null);
     try {
       await publicApi.submitOffer(faId, {
         teamAbbrev,
         gm: gm.trim() || "anon",
-        codeWord: codeWord.trim() || undefined,
+        codeWord: codeTrim,
         amount: amt,
         years: yrs,
       });
@@ -173,20 +178,21 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
             </label>
             <label className="col-span-6 sm:col-span-3">
               <div className="font-mono text-[9px] tracking-widest opacity-60 mb-0.5">
-                CODE WORD
+                CODE WORD *
               </div>
               <input
                 type="text"
+                required
                 value={codeWord}
                 onChange={(e) => setCodeWord(e.target.value)}
-                placeholder="for mod ID"
-                title="A passphrase mods know is yours — used to verify the offer came from you."
+                placeholder="your private key"
+                title="Required. Same code lets you edit/withdraw your offers later."
                 className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm focus:border-[var(--leather)] transition-colors"
               />
             </label>
             <button
               type="submit"
-              disabled={submitting || !amount || !years || hasHard}
+              disabled={submitting || !amount || !years || !codeWord.trim() || hasHard}
               className="col-span-12 sm:col-span-3 bg-[var(--leather)] text-[var(--paper)] font-mono text-xs tracking-wider px-4 py-1.5 hover:bg-[var(--leather-2)] disabled:bg-[color:var(--ink-2)] disabled:text-[color:rgba(243,237,225,0.3)] disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
             >
               {submitting ? (

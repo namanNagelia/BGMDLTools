@@ -126,6 +126,14 @@ export function CalcModal({ faId, onClose, onResolved }: Props) {
 
         {data && (
           <div className="p-4 space-y-6">
+            {data.player.source === "BBGM_ONLY" && (
+              <div className="border-2 border-[var(--mustard)] p-3 font-mono text-xs tracking-widest text-[var(--mustard)]">
+                ⚠ NOT IN VALUES SHEET — MANUAL DECISION
+                <div className="opacity-80 mt-1 tracking-normal text-[11px]">
+                  This FA came from BBGM only, so the calc engine has no scores to work with. Pick the winning offer yourself.
+                </div>
+              </div>
+            )}
             {/* PLAYER VALUE SCORES */}
             <div className="border rule p-3">
               <div className="eyebrow opacity-70 mb-2">PLAYER VALUE SCORES</div>

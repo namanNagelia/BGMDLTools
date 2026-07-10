@@ -152,6 +152,7 @@ export interface IngestResult {
   unmatchedFromValuesSheet: string[];
   ratingsAttached: number;
   teamsInserted: number;
+  bbgmOnlyInserted: number;
   ranks: {
     market: number;
     legacy: number;
@@ -347,6 +348,81 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
   }
   void loyaltyYearsAttached; // reserved for future ingest-summary surfacing
 
+  // ---- BBGM-only FAs: tid=-1 players not present in the sheet ---------
+  const tidToAbbrev = new Map<number, string>();
+  for (const [abv, tid] of abbrevToTid) tidToAbbrev.set(tid, abv);
+
+  const sheetNames = new Set(rowsToInsert.map((r) => normName(r.name)));
+  let bbgmOnlyInserted = 0;
+  const bbgmPlayers = (bbgm as { players?: unknown }).players;
+  if (Array.isArray(bbgmPlayers)) {
+    for (const p of bbgmPlayers as Array<{
+      tid?: number;
+      name?: string;
+      firstName?: string;
+      lastName?: string;
+      born?: { year?: number };
+    }>) {
+      if (p?.tid !== -1) continue;
+      const fullName =
+        p.name && typeof p.name === "string"
+          ? p.name
+          : `${p.firstName ?? ""} ${p.lastName ?? ""}`.trim();
+      if (!fullName) continue;
+      const key = normName(fullName);
+      if (sheetNames.has(key)) continue;
+
+      const idx = playerIndex.get(key);
+      const rt = (idx?.ratings ?? {}) as { pos?: string; ovr?: number };
+      const pos = typeof rt.pos === "string" ? rt.pos : "?";
+      const ovr = typeof rt.ovr === "number" ? rt.ovr : 0;
+      const age = p.born?.year ? nowYear() - p.born.year : 0;
+
+      let prevAbbrev = "FA";
+      let bbgmYearsOnPrev = 1;
+      if (idx?.stats.length) {
+        for (let i = idx.stats.length - 1; i >= 0; i--) {
+          const s = idx.stats[i];
+          if (s.tid >= 0) {
+            const abv = tidToAbbrev.get(s.tid);
+            if (abv) {
+              prevAbbrev = abv;
+              bbgmYearsOnPrev = consecutiveYearsOnTeam(
+                idx.stats,
+                s.tid,
+                season.seasonNumber - 1,
+              );
+              if (bbgmYearsOnPrev < 1) bbgmYearsOnPrev = 1;
+            }
+            break;
+          }
+        }
+      }
+
+      rowsToInsert.push({
+        seasonId: season.id,
+        name: fullName,
+        position: pos,
+        previousTeam: prevAbbrev,
+        capHold: "0",
+        faStatus: "UFA",
+        age,
+        overall: ovr,
+        marketValue: 0,
+        legacyValue: 0,
+        playingTimeValue: 0,
+        winningValue: 0,
+        loyaltyValue: 0,
+        moneyValue: 0,
+        lengthValue: 0,
+        yearsOnPreviousTeam: bbgmYearsOnPrev,
+        source: "BBGM_ONLY",
+        ratings: idx?.ratings ?? null,
+      });
+      bbgmOnlyInserted++;
+    }
+  }
+
   const unmatchedFromTeam: string[] = [];
   for (const [key, v] of valueByName) {
     if (!teamByName.has(key)) unmatchedFromTeam.push(v.Name ?? key);
@@ -411,11 +487,12 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     seasonId: season.id,
     seasonNumber: season.seasonNumber,
     inserted: rowsToInsert.length,
-    matchedInBothSheets: rowsToInsert.length,
+    matchedInBothSheets: rowsToInsert.length - bbgmOnlyInserted,
     unmatchedFromTeamSheet: unmatchedFromTeam,
     unmatchedFromValuesSheet: unmatchedFromValues,
     ratingsAttached,
     teamsInserted: teamRows.length,
+    bbgmOnlyInserted,
     ranks: {
       market: marketRows.length,
       legacy: legacyRows.length,

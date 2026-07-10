@@ -42,6 +42,7 @@ export const freeAgents = pgTable("free_agents", {
   lengthValue: integer("length_value").notNull(),
   wave: integer("wave").default(1).notNull(),
   yearsOnPreviousTeam: integer("years_on_previous_team").default(1).notNull(),
+  source: text("source").default("SHEET").notNull(),
   ratings: jsonb("ratings"),
   renounced: boolean("renounced").default(false).notNull(),
   winningOfferId: integer("winning_offer_id").references(

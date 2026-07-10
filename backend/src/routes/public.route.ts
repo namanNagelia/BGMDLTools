@@ -10,4 +10,8 @@ router.post("/free-agents/:id/renounce", seasonController.renounceFA);
 router.post("/free-agents/:id/offers", offerController.create);
 router.post("/free-agents/:id/offers/preview", offerController.preview);
 
+router.post("/offers/lookup", offerController.lookupByCode);
+router.patch("/offers/:id", offerController.editByCode);
+router.post("/offers/:id/withdraw", offerController.withdrawByCode);
+
 export default router;

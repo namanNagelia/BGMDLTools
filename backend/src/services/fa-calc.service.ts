@@ -50,6 +50,7 @@ export interface CalcResult {
     overall: number;
     faStatus: string;
     previousTeam: string;
+    source: string;
     values: {
       market: number;
       legacy: number;
@@ -473,6 +474,7 @@ export async function calcFreeAgentWinner(faId: number): Promise<CalcResult> {
     overall: fa.overall,
     faStatus: fa.faStatus,
     previousTeam: fa.previousTeam,
+    source: fa.source,
     values: {
       market: fa.marketValue,
       legacy: fa.legacyValue,
