@@ -180,10 +180,6 @@ interface TeamPayroll {
   roster: RosterEntry[];
 }
 
-function nowYear(): number {
-  return new Date().getUTCFullYear();
-}
-
 /** Build per-team rosters + payrolls from BBGM. Contract amount converted thousands → millions. */
 function buildTeamPayrolls(bbgm: unknown, seasonNumber: number): TeamPayroll[] {
   if (!bbgm || typeof bbgm !== "object") return [];
@@ -226,7 +222,7 @@ function buildTeamPayrolls(bbgm: unknown, seasonNumber: number): TeamPayroll[] {
       ovr = typeof pick?.ovr === "number" ? pick.ovr : null;
     }
 
-    const age = p.born?.year ? nowYear() - p.born.year : null;
+    const age = p.born?.year ? seasonNumber - p.born.year : null;
     const amt = p.contract?.amount ?? 0;
 
     list.push({
@@ -376,7 +372,7 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
       const rt = (idx?.ratings ?? {}) as { pos?: string; ovr?: number };
       const pos = typeof rt.pos === "string" ? rt.pos : "?";
       const ovr = typeof rt.ovr === "number" ? rt.ovr : 0;
-      const age = p.born?.year ? nowYear() - p.born.year : 0;
+      const age = p.born?.year ? season.seasonNumber - p.born.year : 0;
 
       let prevAbbrev = "FA";
       let bbgmYearsOnPrev = 1;
