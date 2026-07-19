@@ -485,8 +485,19 @@ export function SeasonRow({ season, onChanged, onError }: Props) {
           <span className="text-[var(--leather)]">INGESTED</span>
           <span>{ingestResult.inserted} FAs</span>
           <span className="opacity-60">
+            · {ingestResult.faUpdated} updated, {ingestResult.faInserted} new
+          </span>
+          <span className="opacity-60">
             · {ingestResult.ratingsAttached}/{ingestResult.inserted} with ratings
           </span>
+          {ingestResult.snapshotId > 0 && (
+            <span
+              className="opacity-60"
+              title={`Snapshot #${ingestResult.snapshotId} preserved ${ingestResult.snapshotFAs} FAs + ${ingestResult.snapshotOffers} offers from before this ingest.`}
+            >
+              · snapshot #{ingestResult.snapshotId} ({ingestResult.snapshotOffers} offers backed up)
+            </span>
+          )}
           {ingestResult.unmatchedFromValuesSheet.length > 0 && (
             <span
               className="opacity-60"

@@ -149,6 +149,11 @@ export interface IngestResult {
   unmatchedFromValuesSheet: string[];
   ratingsAttached: number;
   bbgmOnlyInserted: number;
+  faUpdated: number;
+  faInserted: number;
+  snapshotId: number;
+  snapshotFAs: number;
+  snapshotOffers: number;
   ranks: {
     market: number;
     legacy: number;

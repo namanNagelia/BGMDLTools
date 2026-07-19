@@ -2,8 +2,10 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   freeAgents,
+  ingestSnapshots,
   legacyRanks,
   marketRanks,
+  offers,
   seasons,
   teams,
   winningRanks,
@@ -153,6 +155,11 @@ export interface IngestResult {
   ratingsAttached: number;
   teamsInserted: number;
   bbgmOnlyInserted: number;
+  faUpdated: number;
+  faInserted: number;
+  snapshotId: number;
+  snapshotFAs: number;
+  snapshotOffers: number;
   ranks: {
     market: number;
     legacy: number;
@@ -464,10 +471,83 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     ranks.legacy.filter((r) => r.abbrev === "?").length +
     ranks.winning.filter((w) => w.abbrev === "?").length;
 
+  let snapshotId = 0;
+  let snapshotFAs = 0;
+  let snapshotOffers = 0;
+  let faUpdated = 0;
+  let faInserted = 0;
   await db.transaction(async (tx) => {
-    await tx.delete(freeAgents).where(eq(freeAgents.seasonId, season.id));
-    if (rowsToInsert.length) await tx.insert(freeAgents).values(rowsToInsert);
+    // ---- Snapshot the "before" state so a bad ingest is recoverable. ----
+    const existingFAs = await tx
+      .select()
+      .from(freeAgents)
+      .where(eq(freeAgents.seasonId, season.id));
+    const existingOffers = existingFAs.length
+      ? await tx
+          .select()
+          .from(offers)
+          .where(eq(offers.offerSeason, season.id))
+      : [];
+    const [snap] = await tx
+      .insert(ingestSnapshots)
+      .values({
+        seasonId: season.id,
+        freeAgentsCount: existingFAs.length,
+        offersCount: existingOffers.length,
+        freeAgents: existingFAs,
+        offers: existingOffers,
+      })
+      .returning({ id: ingestSnapshots.id });
+    snapshotId = snap?.id ?? 0;
+    snapshotFAs = existingFAs.length;
+    snapshotOffers = existingOffers.length;
 
+    // ---- Upsert FAs by (seasonId, name) so offers/renouncements/signings survive. ----
+    const existingByKey = new Map(existingFAs.map((r) => [normName(r.name), r]));
+    const freshInserts: (typeof freeAgents.$inferInsert)[] = [];
+
+    for (const row of rowsToInsert) {
+      const key = normName(row.name);
+      const prev = existingByKey.get(key);
+      if (!prev) {
+        freshInserts.push(row);
+        continue;
+      }
+      // Preserve stateful fields: id, wave, renounced, winningOfferId,
+      // and keep faStatus=SIGNED sticky (a signing shouldn't be reverted by a re-ingest).
+      const nextStatus = prev.faStatus === "SIGNED" ? "SIGNED" : row.faStatus;
+      await tx
+        .update(freeAgents)
+        .set({
+          position: row.position,
+          previousTeam: row.previousTeam,
+          capHold: row.capHold,
+          faStatus: nextStatus,
+          age: row.age,
+          overall: row.overall,
+          marketValue: row.marketValue,
+          legacyValue: row.legacyValue,
+          playingTimeValue: row.playingTimeValue,
+          winningValue: row.winningValue,
+          loyaltyValue: row.loyaltyValue,
+          moneyValue: row.moneyValue,
+          lengthValue: row.lengthValue,
+          yearsOnPreviousTeam: row.yearsOnPreviousTeam,
+          source: row.source ?? prev.source,
+          ratings: row.ratings ?? prev.ratings,
+        })
+        .where(eq(freeAgents.id, prev.id));
+      faUpdated++;
+    }
+    if (freshInserts.length) {
+      await tx.insert(freeAgents).values(freshInserts);
+      faInserted = freshInserts.length;
+    }
+    // NOTE: existing FA rows not present in the incoming ingest are intentionally
+    // left untouched — they may carry historical offers, a winning bid, or a SIGNED
+    // status from a completed signing. Full wipe is available via resetSeasonFA.
+
+    // Ranks + team payrolls hold no offer references — safe to fully replace.
     await tx.delete(marketRanks).where(eq(marketRanks.seasonId, season.id));
     await tx.delete(legacyRanks).where(eq(legacyRanks.seasonId, season.id));
     await tx.delete(winningRanks).where(eq(winningRanks.seasonId, season.id));
@@ -489,6 +569,11 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     ratingsAttached,
     teamsInserted: teamRows.length,
     bbgmOnlyInserted,
+    faUpdated,
+    faInserted,
+    snapshotId,
+    snapshotFAs,
+    snapshotOffers,
     ranks: {
       market: marketRows.length,
       legacy: legacyRows.length,

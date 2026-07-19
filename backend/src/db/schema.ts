@@ -104,6 +104,18 @@ export const offerStatusEnum = pgEnum("offer_status", [
   "WITHDRAWN",
 ]);
 
+export const ingestSnapshots = pgTable("ingest_snapshots", {
+  id: serial("id").primaryKey(),
+  seasonId: integer("season_id")
+    .references(() => seasons.id, { onDelete: "cascade" })
+    .notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  freeAgentsCount: integer("free_agents_count").notNull(),
+  offersCount: integer("offers_count").notNull(),
+  freeAgents: jsonb("free_agents").notNull(),
+  offers: jsonb("offers").notNull(),
+});
+
 export const offers = pgTable("offers", {
   id: serial("id").primaryKey(),
   freeAgentId: integer("free_agent_id")
