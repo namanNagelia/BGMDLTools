@@ -109,7 +109,7 @@ export interface FreeAgent {
   moneyValue: number;
   lengthValue: number;
   wave: number;
-  source: "SHEET" | "BBGM_ONLY";
+  source: "SHEET" | "BBGM_ONLY" | "CAP_HOLD_ONLY";
   ratings: Record<string, number | string | null> | null;
   renounced: boolean;
   winningOfferId: number | null;

@@ -55,6 +55,7 @@ const parseStatus = (s: unknown): FaStatus => {
 interface PlayerIndexEntry {
   ratings: Record<string, unknown> | null;
   stats: Array<{ season: number; tid: number }>;
+  bornYear: number | null;
 }
 
 /** Index BBGM players by normalized name → ratings snapshot + per-season (season, tid) stats. */
@@ -75,6 +76,7 @@ function buildPlayerIndex(
       lastName?: string;
       ratings?: unknown;
       stats?: unknown;
+      born?: { year?: number };
     };
     const fullName =
       player.name && typeof player.name === "string"
@@ -110,7 +112,8 @@ function buildPlayerIndex(
       stats.sort((a, b) => a.season - b.season);
     }
 
-    map.set(normName(fullName), { ratings, stats });
+    const bornYear = typeof player.born?.year === "number" ? player.born.year : null;
+    map.set(normName(fullName), { ratings, stats, bornYear });
   }
   return map;
 }
@@ -306,10 +309,6 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
 
   for (const [key, team] of teamByName) {
     const value = valueByName.get(key);
-    if (!value) {
-      unmatchedFromValues.push(team.Name ?? key);
-      continue;
-    }
     const idxEntry = playerIndex.get(key);
     const ratings = idxEntry?.ratings ?? null;
     if (ratings) ratingsAttached++;
@@ -327,6 +326,39 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
         yearsOnPreviousTeam = years;
         loyaltyYearsAttached++;
       }
+    }
+
+    if (!value) {
+      // Signed mid-season → no values row was computed for this cycle, but the
+      // cap holds sheet still lists them so their team can carry the cap hold.
+      // Insert with zeroed value fields; age/pos/ovr from BBGM ratings if available.
+      unmatchedFromValues.push(team.Name ?? key);
+      const rt = (ratings ?? {}) as { pos?: string; ovr?: number };
+      const pos = typeof rt.pos === "string" && rt.pos ? rt.pos : "?";
+      const ovr = typeof rt.ovr === "number" ? rt.ovr : 0;
+      const age = idxEntry?.bornYear != null ? season.seasonNumber - idxEntry.bornYear : 0;
+
+      rowsToInsert.push({
+        seasonId: season.id,
+        name: team.Name!,
+        position: pos,
+        previousTeam: prevAbbrev || "FA",
+        capHold: String(num(team["CAP HOLD (IN MILLIONS)"])),
+        faStatus: parseStatus(team["FA Status"]),
+        age,
+        overall: ovr,
+        marketValue: 0,
+        legacyValue: 0,
+        playingTimeValue: 0,
+        winningValue: 0,
+        loyaltyValue: 0,
+        moneyValue: 0,
+        lengthValue: 0,
+        yearsOnPreviousTeam,
+        source: "CAP_HOLD_ONLY",
+        ratings,
+      });
+      continue;
     }
 
     rowsToInsert.push({
@@ -352,9 +384,6 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
   void loyaltyYearsAttached; // reserved for future ingest-summary surfacing
 
   // ---- BBGM-only FAs: tid=-1 players not present in the sheet ---------
-  const tidToAbbrev = new Map<number, string>();
-  for (const [abv, tid] of abbrevToTid) tidToAbbrev.set(tid, abv);
-
   const sheetNames = new Set(rowsToInsert.map((r) => normName(r.name)));
   let bbgmOnlyInserted = 0;
   const bbgmPlayers = (bbgm as { players?: unknown }).players;
@@ -381,32 +410,15 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
       const ovr = typeof rt.ovr === "number" ? rt.ovr : 0;
       const age = p.born?.year ? season.seasonNumber - p.born.year : 0;
 
-      let prevAbbrev = "FA";
-      let bbgmYearsOnPrev = 1;
-      if (idx?.stats.length) {
-        for (let i = idx.stats.length - 1; i >= 0; i--) {
-          const s = idx.stats[i];
-          if (s.tid >= 0) {
-            const abv = tidToAbbrev.get(s.tid);
-            if (abv) {
-              prevAbbrev = abv;
-              bbgmYearsOnPrev = consecutiveYearsOnTeam(
-                idx.stats,
-                s.tid,
-                season.seasonNumber - 1,
-              );
-              if (bbgmYearsOnPrev < 1) bbgmYearsOnPrev = 1;
-            }
-            break;
-          }
-        }
-      }
+      // BBGM-only FAs (tid=-1 with no cap holds sheet entry) have no Bird
+      // rights — previousTeam=FA keeps them off any team's Manage Renouncement.
+      // Covers players released mid-season and preseason.
 
       rowsToInsert.push({
         seasonId: season.id,
         name: fullName,
         position: pos,
-        previousTeam: prevAbbrev,
+        previousTeam: "FA",
         capHold: "0",
         faStatus: "UFA",
         age,
@@ -418,7 +430,7 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
         loyaltyValue: 0,
         moneyValue: 0,
         lengthValue: 0,
-        yearsOnPreviousTeam: bbgmYearsOnPrev,
+        yearsOnPreviousTeam: 1,
         source: "BBGM_ONLY",
         ratings: idx?.ratings ?? null,
       });
@@ -546,6 +558,21 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     // NOTE: existing FA rows not present in the incoming ingest are intentionally
     // left untouched — they may carry historical offers, a winning bid, or a SIGNED
     // status from a completed signing. Full wipe is available via resetSeasonFA.
+
+    // Clear stale previousTeam for FAs who were dropped from the cap holds sheet
+    // (released mid-season). They lose Bird rights and must not appear on their
+    // old team's Manage Renouncement.
+    const inRowsToInsert = new Set(rowsToInsert.map((r) => normName(r.name)));
+    for (const existing of existingFAs) {
+      const key = normName(existing.name);
+      if (teamByName.has(key)) continue;
+      if (inRowsToInsert.has(key)) continue;
+      if (existing.previousTeam === "FA") continue;
+      await tx
+        .update(freeAgents)
+        .set({ previousTeam: "FA", renounced: false })
+        .where(eq(freeAgents.id, existing.id));
+    }
 
     // Ranks + team payrolls hold no offer references — safe to fully replace.
     await tx.delete(marketRanks).where(eq(marketRanks.seasonId, season.id));
