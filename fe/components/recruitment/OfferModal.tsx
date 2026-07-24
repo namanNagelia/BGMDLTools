@@ -60,7 +60,7 @@ export function OfferModal({ fa, teamAbbrev, onClose, onSubmitted }: Props) {
               >
                 {fa.faStatus}
               </span>
-              <span className="opacity-70">CAP HOLD ${Number(fa.capHold).toFixed(1)}M</span>
+              <span className="opacity-70">CAP HOLD ${Number(fa.capHold).toFixed(2)}M</span>
             </div>
           </div>
           <button

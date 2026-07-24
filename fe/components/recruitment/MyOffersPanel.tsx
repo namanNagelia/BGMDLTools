@@ -172,7 +172,7 @@ export function MyOffersPanel() {
                           className="w-20 bg-transparent border rule px-1 py-0.5 outline-none font-mono text-xs tabular-nums text-right focus:border-[var(--leather)]"
                         />
                       ) : (
-                        `$${Number(o.offerAmount).toFixed(1)}M`
+                        `$${Number(o.offerAmount).toFixed(2)}M`
                       )}
                     </td>
                     <td className="px-3 py-1.5 text-right tabular-nums">

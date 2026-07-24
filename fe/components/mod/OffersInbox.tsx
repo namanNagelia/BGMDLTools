@@ -352,13 +352,13 @@ export function OffersInbox() {
                               )}
                             </td>
                             <td className="px-3 py-1.5 text-right tabular-nums">
-                              ${Number(o.offerAmount).toFixed(1)}M
+                              ${Number(o.offerAmount).toFixed(2)}M
                             </td>
                             <td className="px-3 py-1.5 text-right tabular-nums">
                               {o.offerLength}
                             </td>
                             <td className="px-3 py-1.5 text-right tabular-nums opacity-80">
-                              ${total.toFixed(1)}M
+                              ${total.toFixed(2)}M
                             </td>
                             <td className="px-3 py-1.5">
                               {flagged ? (

@@ -37,7 +37,7 @@ const MLE1_FLOOR = 92.5;
 const MLE1_CEIL = 107.5;
 
 function fmt(n: number, suffix = "M"): string {
-  return `${n >= 0 ? "" : "−"}$${Math.abs(n).toFixed(1)}${suffix}`;
+  return `${n >= 0 ? "" : "−"}$${Math.abs(n).toFixed(2)}${suffix}`;
 }
 
 export function TeamCard({

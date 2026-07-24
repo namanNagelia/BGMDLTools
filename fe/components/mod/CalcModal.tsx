@@ -270,9 +270,9 @@ export function CalcModal({ faId, onClose, onResolved }: Props) {
                                   </span>
                                 </td>
                                 <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">
-                                  ${t.amount.toFixed(1)}M / {t.years}yr
+                                  ${t.amount.toFixed(2)}M / {t.years}yr
                                   <div className="text-[9px] opacity-50">
-                                    ${t.totalMoney.toFixed(0)}M total
+                                    ${t.totalMoney.toFixed(2)}M total
                                   </div>
                                 </td>
                                 {t.values.map((v) => (
