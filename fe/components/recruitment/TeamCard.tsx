@@ -205,6 +205,9 @@ export function TeamCard({
                   <th className="px-3 py-1 text-left text-[10px] tracking-widest opacity-60 w-14">
                     POS
                   </th>
+                  <th className="px-3 py-1 text-right text-[10px] tracking-widest opacity-60 w-12">
+                    AGE
+                  </th>
                   <th className="px-3 py-1 text-right text-[10px] tracking-widest opacity-60 w-14">
                     OVR
                   </th>
@@ -244,6 +247,9 @@ export function TeamCard({
                           {f.name}
                         </td>
                         <td className="px-3 py-1 opacity-80">{f.position}</td>
+                        <td className="px-3 py-1 text-right tabular-nums opacity-80">
+                          {f.age}
+                        </td>
                         <td className="px-3 py-1 text-right tabular-nums">
                           {f.overall}
                         </td>
