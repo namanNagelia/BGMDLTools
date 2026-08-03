@@ -89,12 +89,33 @@ interface ValidateInput {
   payroll: number; // current roster salary
   activeCapHolds: number; // sum of own non-renounced FA holds
   otherOfferTotal: number; // team's other pending offer amounts (not this FA)
+  // sum of own non-renounced cap holds that would be replaced by this offer
+  // or any pending offer from this team (hold vanishes once the FA signs)
+  replacedCapHolds: number;
+}
+
+/** Sum of own non-renounced FA cap holds that would be replaced by team offers. */
+export function sumReplacedCapHolds(
+  ownFAs: (typeof freeAgents.$inferSelect)[],
+  offeredFaIds: Set<number>,
+): number {
+  return ownFAs
+    .filter((f) => !f.renounced && offeredFaIds.has(f.id))
+    .reduce((s, f) => s + Number(f.capHold), 0);
 }
 
 export function computeInvalidReasons(input: ValidateInput): string[] {
   const reasons: string[] = [];
-  const { fa, teamAbbrev, amount, years, payroll, activeCapHolds, otherOfferTotal } =
-    input;
+  const {
+    fa,
+    teamAbbrev,
+    amount,
+    years,
+    payroll,
+    activeCapHolds,
+    otherOfferTotal,
+    replacedCapHolds,
+  } = input;
 
   if (amount <= 0 || years <= 0) {
     reasons.push("Amount and years must be positive");
@@ -105,7 +126,8 @@ export function computeInvalidReasons(input: ValidateInput): string[] {
   const isOwn = fa.previousTeam === teamAbbrev;
   const hasBird = isOwn && !fa.renounced;
 
-  const projectedTotal = totalCommitted + otherOfferTotal + amount;
+  const projectedTotal =
+    totalCommitted + otherOfferTotal + amount - replacedCapHolds;
   if (projectedTotal > HARD_CAP) {
     const over = projectedTotal - HARD_CAP;
     reasons.push(
@@ -225,6 +247,8 @@ export async function previewOffer(input: {
   const otherOfferTotal = pending
     .filter((o) => o.freeAgentId !== fa.id)
     .reduce((s, o) => s + Number(o.offerAmount), 0);
+  const offeredFaIds = new Set<number>([fa.id, ...pending.map((o) => o.freeAgentId)]);
+  const replacedCapHolds = sumReplacedCapHolds(ctx.ownFAs, offeredFaIds);
 
   const warnings = computeInvalidReasons({
     fa,
@@ -234,6 +258,7 @@ export async function previewOffer(input: {
     payroll,
     activeCapHolds,
     otherOfferTotal,
+    replacedCapHolds,
   });
   return { hardViolations, warnings };
 }
@@ -279,6 +304,8 @@ export async function createOffer(input: {
   const otherOfferTotal = pending
     .filter((o) => o.id !== row.id && o.freeAgentId !== fa.id)
     .reduce((s, o) => s + Number(o.offerAmount), 0);
+  const offeredFaIds = new Set<number>([fa.id, ...pending.map((o) => o.freeAgentId)]);
+  const replacedCapHolds = sumReplacedCapHolds(ctx.ownFAs, offeredFaIds);
 
   const invalidReasons = computeInvalidReasons({
     fa,
@@ -288,6 +315,7 @@ export async function createOffer(input: {
     payroll,
     activeCapHolds,
     otherOfferTotal,
+    replacedCapHolds,
   });
   return { offer: row, invalidReasons };
 }
@@ -331,9 +359,15 @@ async function annotate(rawOffers: Offer[]): Promise<OfferWithFlags[]> {
       const activeHolds = ctx.ownFAs
         .filter((f) => !f.renounced)
         .reduce((s, f) => s + Number(f.capHold), 0);
-      const otherOfferTotal = (pendingByTeam.get(o.teamAbbrev) ?? [])
+      const teamPending = pendingByTeam.get(o.teamAbbrev) ?? [];
+      const otherOfferTotal = teamPending
         .filter((x) => x.id !== o.id && x.freeAgentId !== o.freeAgentId)
         .reduce((s, x) => s + Number(x.offerAmount), 0);
+      const offeredFaIds = new Set<number>([
+        o.freeAgentId,
+        ...teamPending.map((x) => x.freeAgentId),
+      ]);
+      const replacedCapHolds = sumReplacedCapHolds(ctx.ownFAs, offeredFaIds);
       invalidReasons = [
         ...computeHardViolations(fa, Number(o.offerAmount), o.offerLength),
         ...computeInvalidReasons({
@@ -344,6 +378,7 @@ async function annotate(rawOffers: Offer[]): Promise<OfferWithFlags[]> {
           payroll,
           activeCapHolds: activeHolds,
           otherOfferTotal,
+          replacedCapHolds,
         }),
       ];
     }
@@ -452,6 +487,8 @@ export async function updateOfferByCode(
     const otherOfferTotal = pending
       .filter((o) => o.id !== id && o.freeAgentId !== fa.id)
       .reduce((s, o) => s + Number(o.offerAmount), 0);
+    const offeredFaIds = new Set<number>([fa.id, ...pending.map((o) => o.freeAgentId)]);
+    const replacedCapHolds = sumReplacedCapHolds(ctx.ownFAs, offeredFaIds);
     invalidReasons = computeInvalidReasons({
       fa,
       teamAbbrev: original.teamAbbrev,
@@ -460,6 +497,7 @@ export async function updateOfferByCode(
       payroll,
       activeCapHolds,
       otherOfferTotal,
+      replacedCapHolds,
     });
   }
   return { offer: updated, invalidReasons };
