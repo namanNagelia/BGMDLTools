@@ -89,7 +89,8 @@ export function MyOffersPanel() {
       <div className="px-3 sm:px-4 py-3 bg-[color:var(--ink-2)] border-b rule">
         <div className="eyebrow opacity-60">MY OFFERS</div>
         <div className="font-mono text-[11px] opacity-70 mt-1">
-          Enter your code word to see, edit, or withdraw your pending offers.
+          Enter the private key you used when submitting to see, edit, or withdraw
+          your pending offers. Case-insensitive.
         </div>
       </div>
 
@@ -99,13 +100,13 @@ export function MyOffersPanel() {
       >
         <label className="flex-1 min-w-[160px]">
           <div className="font-mono text-[9px] tracking-widest opacity-60 mb-0.5">
-            CODE WORD
+            YOUR PRIVATE KEY
           </div>
           <input
             type="text"
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            placeholder="your private key"
+            placeholder="the same key you used when submitting"
             className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm focus:border-[var(--leather)] transition-colors"
           />
         </label>
@@ -131,7 +132,7 @@ export function MyOffersPanel() {
 
       {submitted && offers.length === 0 && !error && (
         <div className="mx-3 sm:mx-4 mb-4 font-mono text-[10px] tracking-widest opacity-60">
-          NO PENDING OFFERS UNDER THAT CODE. CASE-INSENSITIVE MATCH — DOUBLE-CHECK YOUR SPELLING.
+          NO PENDING OFFERS UNDER THAT PRIVATE KEY. CASE-INSENSITIVE MATCH — DOUBLE-CHECK YOUR SPELLING.
         </div>
       )}
 
@@ -160,7 +161,14 @@ export function MyOffersPanel() {
                     }`}
                   >
                     <td className="px-3 py-1.5">{o.playerName ?? `#${o.freeAgentId}`}</td>
-                    <td className="px-3 py-1.5 font-bold">{o.teamAbbrev}</td>
+                    <td className="px-3 py-1.5 font-bold">
+                      {o.teamAbbrev}
+                      {o.isMle && (
+                        <span className="ml-1.5 font-mono text-[9px] tracking-widest text-[var(--mustard)] border border-[var(--mustard)] px-1 py-[1px]">
+                          MLE
+                        </span>
+                      )}
+                    </td>
                     <td className="px-3 py-1.5 text-right tabular-nums">
                       {editing ? (
                         <input

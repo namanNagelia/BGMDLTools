@@ -92,6 +92,36 @@ interface ValidateInput {
   // sum of own non-renounced cap holds that would be replaced by this offer
   // or any pending offer from this team (hold vanishes once the FA signs)
   replacedCapHolds: number;
+  isMLE?: boolean;
+  otherMLECommitted?: number; // team's other MLE offers (pending + accepted, not this one)
+}
+
+/** Hard MLE-specific violations. Only relevant when the offer is declared MLE. */
+export function computeMLEViolations(input: {
+  amount: number;
+  years: number;
+  totalCommitted: number; // team salary + active cap holds (excludes FA offers)
+  otherMLECommitted: number; // team's other MLE offers (pending + accepted, not this one)
+}): string[] {
+  const status = mleStatusFor(input.totalCommitted);
+  if (!status.available) {
+    return [
+      `Team not eligible for MLE (salary + holds under $${MLE1_FLOOR.toFixed(1)}M)`,
+    ];
+  }
+  const violations: string[] = [];
+  const maxAmt = status.maxAmount!;
+  const maxYrs = status.maxYears!;
+  if (input.years > maxYrs) {
+    violations.push(`MLE T${status.tier} max ${maxYrs} years (got ${input.years})`);
+  }
+  const remaining = Math.max(0, maxAmt - input.otherMLECommitted);
+  if (input.amount > remaining + 1e-9) {
+    violations.push(
+      `MLE T${status.tier} has $${remaining.toFixed(2)}M left this season (need $${input.amount.toFixed(2)}M)`,
+    );
+  }
+  return violations;
 }
 
 /** Sum of own non-renounced FA cap holds that would be replaced by team offers. */
@@ -115,6 +145,7 @@ export function computeInvalidReasons(input: ValidateInput): string[] {
     activeCapHolds,
     otherOfferTotal,
     replacedCapHolds,
+    isMLE = false,
   } = input;
 
   if (amount <= 0 || years <= 0) {
@@ -135,7 +166,10 @@ export function computeInvalidReasons(input: ValidateInput): string[] {
     );
   }
 
-  if (!hasBird) {
+  // MLE is its own cap-clearing mechanism — hard MLE violations are checked
+  // separately in computeMLEViolations before an offer is accepted, so skip
+  // the soft-cap warning when the offer is declared MLE.
+  if (!hasBird && !isMLE) {
     const isMin = amount <= MIN_SALARY;
     const inMLE1Tier = totalCommitted >= MLE1_FLOOR && totalCommitted <= MLE1_CEIL;
     const inMLE2Tier = totalCommitted > MLE1_CEIL;
@@ -216,9 +250,35 @@ async function pendingOffersForTeam(teamAbbrev: string, seasonId: number) {
     );
 }
 
+/** Sum of a team's MLE-flagged offer amounts (pending + accepted), optionally
+ * excluding a specific offer id (used when editing that offer). */
+export function sumMLECommitted(
+  teamOffers: Offer[],
+  excludeOfferId?: number,
+): number {
+  return teamOffers
+    .filter((o) => o.isMle)
+    .filter((o) => o.status === "PENDING" || o.status === "ACCEPTED")
+    .filter((o) => excludeOfferId == null || o.id !== excludeOfferId)
+    .reduce((s, o) => s + Number(o.offerAmount), 0);
+}
+
+async function allTeamOffers(teamAbbrev: string, seasonId: number) {
+  return db
+    .select()
+    .from(offers)
+    .where(
+      and(eq(offers.teamAbbrev, teamAbbrev), eq(offers.offerSeason, seasonId)),
+    );
+}
+
 export interface OfferPreview {
   hardViolations: string[];
   warnings: string[]; // formerly "invalidReasons" — cap/Bird/MLE flags
+  mle: MLEStatus & {
+    committed: number; // team's already-committed MLE (excludes this offer)
+    remaining: number;
+  };
 }
 
 /** Dry-run validate an offer (used by the GM form for live warnings). */
@@ -227,6 +287,7 @@ export async function previewOffer(input: {
   teamAbbrev: string;
   amount: number;
   years: number;
+  isMLE?: boolean;
 }): Promise<OfferPreview> {
   const [fa] = await db
     .select()
@@ -236,19 +297,45 @@ export async function previewOffer(input: {
   if (!fa) throw new LeagueFetchError("Free agent not found", 404);
 
   const hardViolations = computeHardViolations(fa, input.amount, input.years);
+  const isMLE = input.isMLE === true;
 
   const ctx = await loadTeamCapContext(input.teamAbbrev);
-  if (!ctx) return { hardViolations, warnings: [] };
+  if (!ctx) {
+    return {
+      hardViolations,
+      warnings: [],
+      mle: {
+        available: false,
+        tier: null,
+        maxAmount: null,
+        maxYears: null,
+        committed: 0,
+        remaining: 0,
+      },
+    };
+  }
   const payroll = ctx.team ? Number(ctx.team.totalSalary) : 0;
   const activeCapHolds = ctx.ownFAs
     .filter((f) => !f.renounced)
     .reduce((s, f) => s + Number(f.capHold), 0);
-  const pending = await pendingOffersForTeam(input.teamAbbrev, fa.seasonId);
+  const totalCommitted = payroll + activeCapHolds;
+
+  const teamOffers = await allTeamOffers(input.teamAbbrev, fa.seasonId);
+  const pending = teamOffers.filter((o) => o.status === "PENDING");
   const otherOfferTotal = pending
     .filter((o) => o.freeAgentId !== fa.id)
     .reduce((s, o) => s + Number(o.offerAmount), 0);
   const offeredFaIds = new Set<number>([fa.id, ...pending.map((o) => o.freeAgentId)]);
   const replacedCapHolds = sumReplacedCapHolds(ctx.ownFAs, offeredFaIds);
+
+  // Exclude this FA's pending offer from the MLE-committed sum (if the user
+  // is editing/re-previewing an existing MLE offer, we don't want to
+  // double-count it against themselves).
+  const otherMLECommitted = teamOffers
+    .filter((o) => o.isMle)
+    .filter((o) => o.status === "PENDING" || o.status === "ACCEPTED")
+    .filter((o) => o.freeAgentId !== fa.id)
+    .reduce((s, o) => s + Number(o.offerAmount), 0);
 
   const warnings = computeInvalidReasons({
     fa,
@@ -259,8 +346,31 @@ export async function previewOffer(input: {
     activeCapHolds,
     otherOfferTotal,
     replacedCapHolds,
+    isMLE,
+    otherMLECommitted,
   });
-  return { hardViolations, warnings };
+
+  const mleStatus = mleStatusFor(totalCommitted);
+  const mle = {
+    ...mleStatus,
+    committed: otherMLECommitted,
+    remaining: Math.max(0, (mleStatus.maxAmount ?? 0) - otherMLECommitted),
+  };
+
+  const mleHard = isMLE
+    ? computeMLEViolations({
+        amount: input.amount,
+        years: input.years,
+        totalCommitted,
+        otherMLECommitted,
+      })
+    : [];
+
+  return {
+    hardViolations: [...hardViolations, ...mleHard],
+    warnings,
+    mle,
+  };
 }
 
 export async function createOffer(input: {
@@ -270,6 +380,7 @@ export async function createOffer(input: {
   years: number;
   gm: string;
   codeWord: string;
+  isMLE?: boolean;
 }): Promise<{ offer: Offer; invalidReasons: string[] }> {
   const [fa] = await db
     .select()
@@ -278,8 +389,40 @@ export async function createOffer(input: {
     .limit(1);
   if (!fa) throw new LeagueFetchError("Free agent not found", 404);
 
+  const isMLE = input.isMLE === true;
   const hardViolations = computeHardViolations(fa, input.amount, input.years);
-  if (hardViolations.length > 0) throw new OfferValidationError(hardViolations);
+
+  // MLE hard checks need team context, so compute them before insert.
+  const ctxPre = await loadTeamCapContext(input.teamAbbrev);
+  if (isMLE) {
+    if (!ctxPre) {
+      throw new OfferValidationError([
+        "MLE requires an active team cap context",
+      ]);
+    }
+    const payroll = ctxPre.team ? Number(ctxPre.team.totalSalary) : 0;
+    const activeCapHolds = ctxPre.ownFAs
+      .filter((f) => !f.renounced)
+      .reduce((s, f) => s + Number(f.capHold), 0);
+    const totalCommitted = payroll + activeCapHolds;
+    const teamOffers = await allTeamOffers(input.teamAbbrev, fa.seasonId);
+    const otherMLECommitted = teamOffers
+      .filter((o) => o.isMle)
+      .filter((o) => o.status === "PENDING" || o.status === "ACCEPTED")
+      .filter((o) => o.freeAgentId !== fa.id)
+      .reduce((s, o) => s + Number(o.offerAmount), 0);
+    const mleHard = computeMLEViolations({
+      amount: input.amount,
+      years: input.years,
+      totalCommitted,
+      otherMLECommitted,
+    });
+    if (mleHard.length > 0 || hardViolations.length > 0) {
+      throw new OfferValidationError([...hardViolations, ...mleHard]);
+    }
+  } else if (hardViolations.length > 0) {
+    throw new OfferValidationError(hardViolations);
+  }
 
   const [row] = await db
     .insert(offers)
@@ -291,21 +434,28 @@ export async function createOffer(input: {
       offerSeason: fa.seasonId,
       offerGm: input.gm,
       codeWord: input.codeWord.trim(),
+      isMle: isMLE,
     })
     .returning();
 
-  const ctx = await loadTeamCapContext(input.teamAbbrev);
+  const ctx = ctxPre;
   if (!ctx) return { offer: row, invalidReasons: [] };
   const payroll = ctx.team ? Number(ctx.team.totalSalary) : 0;
   const activeCapHolds = ctx.ownFAs
     .filter((f) => !f.renounced)
     .reduce((s, f) => s + Number(f.capHold), 0);
-  const pending = await pendingOffersForTeam(input.teamAbbrev, fa.seasonId);
+  const teamOffers = await allTeamOffers(input.teamAbbrev, fa.seasonId);
+  const pending = teamOffers.filter((o) => o.status === "PENDING");
   const otherOfferTotal = pending
     .filter((o) => o.id !== row.id && o.freeAgentId !== fa.id)
     .reduce((s, o) => s + Number(o.offerAmount), 0);
   const offeredFaIds = new Set<number>([fa.id, ...pending.map((o) => o.freeAgentId)]);
   const replacedCapHolds = sumReplacedCapHolds(ctx.ownFAs, offeredFaIds);
+  const otherMLECommitted = teamOffers
+    .filter((o) => o.isMle)
+    .filter((o) => o.status === "PENDING" || o.status === "ACCEPTED")
+    .filter((o) => o.id !== row.id)
+    .reduce((s, o) => s + Number(o.offerAmount), 0);
 
   const invalidReasons = computeInvalidReasons({
     fa,
@@ -316,6 +466,8 @@ export async function createOffer(input: {
     activeCapHolds,
     otherOfferTotal,
     replacedCapHolds,
+    isMLE,
+    otherMLECommitted,
   });
   return { offer: row, invalidReasons };
 }
@@ -368,8 +520,25 @@ async function annotate(rawOffers: Offer[]): Promise<OfferWithFlags[]> {
         ...teamPending.map((x) => x.freeAgentId),
       ]);
       const replacedCapHolds = sumReplacedCapHolds(ctx.ownFAs, offeredFaIds);
+      // Sum other MLE-flagged commitments (pending + accepted) for this team,
+      // excluding the current offer under review.
+      const teamAllOffers = await allTeamOffers(o.teamAbbrev, o.offerSeason);
+      const otherMLECommitted = teamAllOffers
+        .filter((x) => x.isMle)
+        .filter((x) => x.status === "PENDING" || x.status === "ACCEPTED")
+        .filter((x) => x.id !== o.id)
+        .reduce((s, x) => s + Number(x.offerAmount), 0);
+      const mleHard = o.isMle
+        ? computeMLEViolations({
+            amount: Number(o.offerAmount),
+            years: o.offerLength,
+            totalCommitted: payroll + activeHolds,
+            otherMLECommitted,
+          })
+        : [];
       invalidReasons = [
         ...computeHardViolations(fa, Number(o.offerAmount), o.offerLength),
+        ...mleHard,
         ...computeInvalidReasons({
           fa,
           teamAbbrev: o.teamAbbrev,
@@ -379,6 +548,8 @@ async function annotate(rawOffers: Offer[]): Promise<OfferWithFlags[]> {
           activeCapHolds: activeHolds,
           otherOfferTotal,
           replacedCapHolds,
+          isMLE: o.isMle,
+          otherMLECommitted,
         }),
       ];
     }
@@ -448,7 +619,7 @@ async function loadOfferIfCodeMatches(
 export async function updateOfferByCode(
   id: number,
   code: string,
-  patch: { amount?: number; years?: number },
+  patch: { amount?: number; years?: number; isMLE?: boolean },
 ): Promise<{ offer: Offer; invalidReasons: string[] } | null> {
   const original = await loadOfferIfCodeMatches(id, code);
   if (!original) return null;
@@ -463,32 +634,69 @@ export async function updateOfferByCode(
 
   const newAmount = patch.amount ?? Number(original.offerAmount);
   const newYears = patch.years ?? original.offerLength;
+  const newIsMLE = patch.isMLE ?? original.isMle;
 
   const hardViolations = computeHardViolations(fa, newAmount, newYears);
-  if (hardViolations.length > 0) throw new OfferValidationError(hardViolations);
+
+  // Team-context MLE hard checks (if declared MLE), excluding this offer id.
+  const ctx = await loadTeamCapContext(original.teamAbbrev);
+  if (newIsMLE) {
+    if (!ctx) {
+      throw new OfferValidationError([
+        "MLE requires an active team cap context",
+      ]);
+    }
+    const payroll = ctx.team ? Number(ctx.team.totalSalary) : 0;
+    const activeCapHolds = ctx.ownFAs
+      .filter((f) => !f.renounced)
+      .reduce((s, f) => s + Number(f.capHold), 0);
+    const teamOffers = await allTeamOffers(original.teamAbbrev, fa.seasonId);
+    const otherMLECommitted = teamOffers
+      .filter((o) => o.isMle)
+      .filter((o) => o.status === "PENDING" || o.status === "ACCEPTED")
+      .filter((o) => o.id !== id)
+      .reduce((s, o) => s + Number(o.offerAmount), 0);
+    const mleHard = computeMLEViolations({
+      amount: newAmount,
+      years: newYears,
+      totalCommitted: payroll + activeCapHolds,
+      otherMLECommitted,
+    });
+    if (mleHard.length > 0 || hardViolations.length > 0) {
+      throw new OfferValidationError([...hardViolations, ...mleHard]);
+    }
+  } else if (hardViolations.length > 0) {
+    throw new OfferValidationError(hardViolations);
+  }
 
   const [updated] = await db
     .update(offers)
     .set({
       offerAmount: newAmount.toFixed(2),
       offerLength: newYears,
+      isMle: newIsMLE,
     })
     .where(eq(offers.id, id))
     .returning();
 
-  const ctx = await loadTeamCapContext(original.teamAbbrev);
   let invalidReasons: string[] = [];
   if (ctx) {
     const payroll = ctx.team ? Number(ctx.team.totalSalary) : 0;
     const activeCapHolds = ctx.ownFAs
       .filter((f) => !f.renounced)
       .reduce((s, f) => s + Number(f.capHold), 0);
-    const pending = await pendingOffersForTeam(original.teamAbbrev, fa.seasonId);
+    const teamOffers = await allTeamOffers(original.teamAbbrev, fa.seasonId);
+    const pending = teamOffers.filter((o) => o.status === "PENDING");
     const otherOfferTotal = pending
       .filter((o) => o.id !== id && o.freeAgentId !== fa.id)
       .reduce((s, o) => s + Number(o.offerAmount), 0);
     const offeredFaIds = new Set<number>([fa.id, ...pending.map((o) => o.freeAgentId)]);
     const replacedCapHolds = sumReplacedCapHolds(ctx.ownFAs, offeredFaIds);
+    const otherMLECommitted = teamOffers
+      .filter((o) => o.isMle)
+      .filter((o) => o.status === "PENDING" || o.status === "ACCEPTED")
+      .filter((o) => o.id !== id)
+      .reduce((s, o) => s + Number(o.offerAmount), 0);
     invalidReasons = computeInvalidReasons({
       fa,
       teamAbbrev: original.teamAbbrev,
@@ -498,6 +706,8 @@ export async function updateOfferByCode(
       activeCapHolds,
       otherOfferTotal,
       replacedCapHolds,
+      isMLE: newIsMLE,
+      otherMLECommitted,
     });
   }
   return { offer: updated, invalidReasons };

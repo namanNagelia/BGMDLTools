@@ -11,12 +11,14 @@ const createSchema = z.object({
   codeWord: z.string().min(1).max(64),
   amount: z.coerce.number().positive(),
   years: z.coerce.number().int().positive(),
+  isMLE: z.boolean().optional(),
 });
 
 const previewSchema = z.object({
   teamAbbrev: z.string().min(1).max(8),
   amount: z.coerce.number().positive(),
   years: z.coerce.number().int().positive(),
+  isMLE: z.boolean().optional(),
 });
 
 export async function preview(
@@ -129,6 +131,7 @@ const editSchema = z.object({
   codeWord: z.string().min(1).max(64),
   amount: z.coerce.number().positive().optional(),
   years: z.coerce.number().int().positive().optional(),
+  isMLE: z.boolean().optional(),
 });
 
 export async function editByCode(
@@ -146,6 +149,7 @@ export async function editByCode(
     const result = await offerService.updateOfferByCode(id.data, body.data.codeWord, {
       amount: body.data.amount,
       years: body.data.years,
+      isMLE: body.data.isMLE,
     });
     if (!result) {
       res.status(404).json({ error: "not_found_or_wrong_code" });

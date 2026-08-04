@@ -4,6 +4,7 @@ import { useState } from "react";
 import type {
   CurrentSeasonRanks,
   FreeAgent,
+  PendingOfferSummary,
   TeamRow,
 } from "@/lib/api";
 import { Disclosure } from "./Disclosure";
@@ -15,6 +16,7 @@ interface Props {
   ownFAs: FreeAgent[];
   onRenounce: (faId: number, renounced: boolean) => Promise<void>;
   view?: "roster" | "fa";
+  pendingOffers?: PendingOfferSummary[];
 }
 
 const TIER_LABEL: Record<number, string> = {
@@ -47,6 +49,7 @@ export function TeamCard({
   ownFAs,
   onRenounce,
   view = "fa",
+  pendingOffers = [],
 }: Props) {
   const market = ranks.market[abbrev];
   const legacy = ranks.legacy[abbrev];
@@ -78,6 +81,25 @@ export function TeamCard({
   const hardRoom = HARD_CAP - committed;
   const overSoft = softRoom < 0;
   const overHard = hardRoom < 0;
+
+  // "if all my pending offers were accepted" projection —
+  // add offer amounts, drop replaced cap holds (own non-renounced FAs
+  // that this team has an offer out on)
+  const myOfferTotal = pendingOffers.reduce((s, o) => s + o.amount, 0);
+  const offeredOwnFaIds = new Set(
+    pendingOffers
+      .map((o) => o.freeAgentId)
+      .filter((id) => activeHolds.some((f) => f.id === id)),
+  );
+  const replacedHolds = activeHolds
+    .filter((f) => offeredOwnFaIds.has(f.id))
+    .reduce((s, f) => s + Number(f.capHold || 0), 0);
+  const committedAfter = committed + myOfferTotal - replacedHolds;
+  const softRoomAfter = SOFT_CAP - committedAfter;
+  const hardRoomAfter = HARD_CAP - committedAfter;
+  const overSoftAfter = softRoomAfter < 0;
+  const overHardAfter = hardRoomAfter < 0;
+  const hasPending = pendingOffers.length > 0;
 
   // MLE tier
   let mleTier: 1 | 2 | null = null;
@@ -175,6 +197,68 @@ export function TeamCard({
           </div>
         </div>
       </div>
+
+      {/* AFTER SIGNINGS ----------------------------------------------- */}
+      {hasPending && (
+        <div className="border rule p-3 mb-3 bg-[color:var(--ink)]">
+          <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
+            <div className="eyebrow opacity-70">
+              CAP IF ALL {pendingOffers.length} PENDING OFFER
+              {pendingOffers.length === 1 ? "" : "S"} ACCEPTED
+            </div>
+            <div className="font-mono text-[10px] tracking-widest opacity-60">
+              +{fmt(myOfferTotal)} OFFERS
+              {replacedHolds > 0 && (
+                <span> · −{fmt(replacedHolds)} HOLDS REPLACED</span>
+              )}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            <div className="border rule p-2.5">
+              <div className="eyebrow opacity-60">TOTAL COMMITTED</div>
+              <div className="display text-xl leading-none mt-1 tabular-nums">
+                {fmt(committedAfter)}
+              </div>
+              <div className="font-mono text-[10px] tracking-widest opacity-50 mt-1">
+                WAS {fmt(committed)}
+              </div>
+            </div>
+            <div
+              className={`border p-2.5 ${overSoftAfter ? "border-[var(--mustard)]" : "rule"}`}
+            >
+              <div className="eyebrow opacity-60">SOFT CAP ROOM</div>
+              <div
+                className={`display text-xl leading-none mt-1 tabular-nums ${
+                  overSoftAfter ? "text-[var(--mustard)]" : ""
+                }`}
+              >
+                {fmt(softRoomAfter)}
+              </div>
+              <div className="font-mono text-[10px] tracking-widest opacity-50 mt-1">
+                VS ${SOFT_CAP}M · {overSoftAfter ? "OVER" : "UNDER"}
+              </div>
+            </div>
+            <div
+              className={`border p-2.5 ${overHardAfter ? "border-[var(--leather)]" : "rule"}`}
+            >
+              <div className="eyebrow opacity-60">HARD CAP ROOM</div>
+              <div
+                className={`display text-xl leading-none mt-1 tabular-nums ${
+                  overHardAfter ? "text-[var(--leather)]" : ""
+                }`}
+              >
+                {fmt(hardRoomAfter)}
+              </div>
+              <div className="font-mono text-[10px] tracking-widest opacity-50 mt-1">
+                VS ${HARD_CAP}M · {overHardAfter ? "OVER" : "HEADROOM"}
+              </div>
+            </div>
+          </div>
+          <div className="font-mono text-[9px] tracking-widest opacity-50 mt-2">
+            PROJECTION ONLY · MOD DECIDES WHICH OFFERS ACCEPT
+          </div>
+        </div>
+      )}
 
       {/* OWN FAs WITH CAP HOLDS */}
       {view === "roster" && ownFAs.length > 0 && (

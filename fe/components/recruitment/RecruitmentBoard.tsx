@@ -90,11 +90,13 @@ export function RecruitmentBoard() {
     freeAgents: FreeAgent[];
     ranks: CurrentSeasonRanks;
     teams: Record<string, import("@/lib/api").TeamRow>;
+    pendingOffersByTeam: Record<string, import("@/lib/api").PendingOfferSummary[]>;
   }>({
     season: null,
     freeAgents: [],
     ranks: { market: {}, legacy: {}, winning: {} },
     teams: {},
+    pendingOffersByTeam: {},
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -307,7 +309,7 @@ export function RecruitmentBoard() {
             num: 5,
             title: "Send an offer",
             body: (
-              <>Click <b>OFFER</b> on any row. Enter amount ($M/yr), years, your GM name, and a code word the mod will recognize as yours. Live warnings show if your cap doesn't fit — submit anyway (trades count).</>
+              <>Click <b>OFFER</b> on any row. Enter amount ($M/yr), years, your GM name, and a <b>private key</b> only you know. The private key isn't visible to other GMs and isn't how the mod identifies you (that's your GM name) — it's the password you'll type into <b>MY OFFERS</b> to edit or withdraw later. Toggle <b>USE MLE</b> if you're over the soft cap. Live warnings show if your cap doesn't fit — submit anyway (trades count).</>
             ),
           },
           {
@@ -379,6 +381,7 @@ export function RecruitmentBoard() {
             ranks={data.ranks}
             teams={data.teams}
             ownFAs={data.freeAgents.filter((f) => f.previousTeam === gmTeam)}
+            pendingOffers={data.pendingOffersByTeam[gmTeam] ?? []}
             view="roster"
             onRenounce={async (faId, renounced) => {
               try {
@@ -413,6 +416,7 @@ export function RecruitmentBoard() {
               ranks={data.ranks}
               teams={data.teams}
               ownFAs={data.freeAgents.filter((f) => f.previousTeam === gmTeam)}
+              pendingOffers={data.pendingOffersByTeam[gmTeam] ?? []}
               view="fa"
               onRenounce={async (faId, renounced) => {
                 try {
@@ -725,7 +729,12 @@ export function RecruitmentBoard() {
           teamAbbrev={gmTeam}
           onClose={() => setOfferFor(null)}
           onSubmitted={() => {
-            /* fire-and-forget; GMs no longer see offers */
+            // refresh pendingOffersByTeam so the AFTER SIGNINGS card
+            // reflects the new offer
+            publicApi
+              .currentSeasonFAs()
+              .then((d) => setData(d))
+              .catch(() => {});
           }}
         />
       )}

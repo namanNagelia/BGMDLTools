@@ -1,20 +1,51 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ApiError, publicApi } from "@/lib/api";
+import { ApiError, publicApi, type MLEStatus } from "@/lib/api";
 
 interface Props {
   faId: number;
   faName: string;
+  faOverall: number;
   teamAbbrev: string;
   onSubmitted?: () => void;
 }
 
-export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
+/** Mirrors backend OVR_MIN_TABLE in offer.service.ts — keep in sync. */
+const PAYSCALE: Array<{ ovr: string; min: number; note?: string }> = [
+  { ovr: "70+", min: 33, note: "must be MAX" },
+  { ovr: "68–69", min: 28 },
+  { ovr: "66–67", min: 22 },
+  { ovr: "63–65", min: 15 },
+  { ovr: "61–62", min: 10 },
+  { ovr: "59–60", min: 5 },
+  { ovr: "57–58", min: 3 },
+  { ovr: "≤56", min: 1, note: "min contract" },
+];
+
+function ovrBand(ovr: number): string {
+  if (ovr >= 70) return "70+";
+  if (ovr >= 68) return "68–69";
+  if (ovr >= 66) return "66–67";
+  if (ovr >= 63) return "63–65";
+  if (ovr >= 61) return "61–62";
+  if (ovr >= 59) return "59–60";
+  if (ovr >= 57) return "57–58";
+  return "≤56";
+}
+
+export function OfferForm({
+  faId,
+  faName,
+  faOverall,
+  teamAbbrev,
+  onSubmitted,
+}: Props) {
   const [amount, setAmount] = useState("");
   const [years, setYears] = useState("");
   const [gm, setGm] = useState("");
   const [codeWord, setCodeWord] = useState("");
+  const [useMLE, setUseMLE] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submittedOk, setSubmittedOk] = useState(false);
@@ -23,6 +54,7 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
   const [previewing, setPreviewing] = useState(false);
   const [hardViolations, setHardViolations] = useState<string[]>([]);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [mle, setMle] = useState<MLEStatus | null>(null);
 
   // remember GM name + code word across the session
   useEffect(() => {
@@ -42,6 +74,7 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
     if (!teamAbbrev || !(amt > 0) || !(yrs > 0)) {
       setHardViolations([]);
       setWarnings([]);
+      setMle(null);
       return;
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -52,12 +85,15 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
           teamAbbrev,
           amount: amt,
           years: yrs,
+          isMLE: useMLE,
         });
         setHardViolations(r.hardViolations);
         setWarnings(r.warnings);
+        setMle(r.mle);
       } catch {
         setHardViolations([]);
         setWarnings([]);
+        setMle(null);
       } finally {
         setPreviewing(false);
       }
@@ -65,7 +101,13 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [faId, teamAbbrev, amount, years]);
+  }, [faId, teamAbbrev, amount, years, useMLE]);
+
+  // If the team becomes MLE-ineligible, drop the toggle so the user isn't
+  // stuck with an offer that will hard-fail on submit.
+  useEffect(() => {
+    if (useMLE && mle && !mle.available) setUseMLE(false);
+  }, [useMLE, mle]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -81,7 +123,7 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
     }
     const codeTrim = codeWord.trim();
     if (!codeTrim) {
-      setSubmitError("CODE WORD REQUIRED");
+      setSubmitError("PRIVATE KEY REQUIRED");
       return;
     }
     setSubmitting(true);
@@ -93,6 +135,7 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
         codeWord: codeTrim,
         amount: amt,
         years: yrs,
+        isMLE: useMLE,
       });
       if (typeof window !== "undefined") {
         if (gm.trim()) window.localStorage.setItem("gmName", gm.trim());
@@ -101,6 +144,7 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
       }
       setAmount("");
       setYears("");
+      setUseMLE(false);
       setHardViolations([]);
       setWarnings([]);
       setSubmittedOk(true);
@@ -108,7 +152,6 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
       setTimeout(() => setSubmittedOk(false), 4000);
     } catch (err) {
       if (err instanceof ApiError && err.status === 400) {
-        // server-side hard violation message
         setSubmitError(err.message.toUpperCase());
       } else {
         setSubmitError(err instanceof ApiError ? err.message.toUpperCase() : "FAILED");
@@ -120,6 +163,7 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
 
   const hasHard = hardViolations.length > 0;
   const hasWarn = warnings.length > 0;
+  const bandForFA = ovrBand(faOverall);
 
   return (
     <div className="border-t rule pt-3 mt-3">
@@ -131,6 +175,42 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
         </div>
       ) : (
         <>
+          {/* PAYSCALE ---------------------------------------------------- */}
+          <div className="border rule p-3 mb-3">
+            <div className="flex items-baseline justify-between gap-2 mb-1.5">
+              <div className="eyebrow opacity-60">FA PAYSCALE</div>
+              <div className="font-mono text-[10px] tracking-widest opacity-70">
+                OVR {faOverall} → band <span className="text-[var(--leather)]">{bandForFA}</span>
+              </div>
+            </div>
+            <div className="grid grid-cols-4 sm:grid-cols-8 gap-1 font-mono text-[10px] tabular-nums">
+              {PAYSCALE.map((row) => {
+                const isMine = row.ovr === bandForFA;
+                return (
+                  <div
+                    key={row.ovr}
+                    className={`px-1.5 py-1 border text-center ${
+                      isMine
+                        ? "border-[var(--leather)] bg-[color:rgba(166,90,38,0.14)]"
+                        : "rule opacity-70"
+                    }`}
+                    title={row.note ?? ""}
+                  >
+                    <div className={`tracking-widest ${isMine ? "text-[var(--leather)]" : ""}`}>
+                      {row.ovr}
+                    </div>
+                    <div className={`mt-0.5 ${isMine ? "font-bold" : ""}`}>
+                      ≥ ${row.min}M
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="font-mono text-[9px] tracking-widest opacity-50 mt-1.5">
+              MIN $/YR IS ENFORCED · MAX CONTRACT $33M/YR · YEARS 1–5
+            </div>
+          </div>
+
           <form onSubmit={handleSubmit} className="grid grid-cols-12 gap-2 items-end">
             <label className="col-span-6 sm:col-span-2">
               <div className="font-mono text-[9px] tracking-widest opacity-60 mb-0.5">
@@ -166,7 +246,7 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
             </label>
             <label className="col-span-6 sm:col-span-3">
               <div className="font-mono text-[9px] tracking-widest opacity-60 mb-0.5">
-                GM NAME
+                GM NAME (public)
               </div>
               <input
                 type="text"
@@ -178,15 +258,15 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
             </label>
             <label className="col-span-6 sm:col-span-3">
               <div className="font-mono text-[9px] tracking-widest opacity-60 mb-0.5">
-                CODE WORD *
+                YOUR PRIVATE KEY *
               </div>
               <input
                 type="text"
                 required
                 value={codeWord}
                 onChange={(e) => setCodeWord(e.target.value)}
-                placeholder="your private key"
-                title="Required. Same code lets you edit/withdraw your offers later."
+                placeholder="pick anything only you know"
+                title="Personal password. Not visible to other GMs and not used by the mod to identify you (that's the GM Name). This is the key you type into MY OFFERS to edit or withdraw. Use the same one across all your offers."
                 className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm focus:border-[var(--leather)] transition-colors"
               />
             </label>
@@ -202,10 +282,59 @@ export function OfferForm({ faId, faName, teamAbbrev, onSubmitted }: Props) {
                 </>
               ) : hasHard ? (
                 "FIX VIOLATIONS"
+              ) : useMLE ? (
+                "SUBMIT MLE OFFER"
               ) : (
                 "SUBMIT OFFER"
               )}
             </button>
+
+            {/* MLE toggle row --------------------------------------- */}
+            <div className="col-span-12">
+              <label
+                className={`inline-flex items-center gap-2 border rule px-2 py-1.5 cursor-pointer select-none ${
+                  useMLE ? "border-[var(--mustard)] text-[var(--mustard)]" : ""
+                } ${mle && !mle.available ? "opacity-50 cursor-not-allowed" : ""}`}
+                title={
+                  mle && !mle.available
+                    ? "MLE not available — team salary + holds below $92.5M"
+                    : "Use the Mid-Level Exception to sign over the soft cap"
+                }
+              >
+                <input
+                  type="checkbox"
+                  className="accent-[var(--mustard)]"
+                  checked={useMLE}
+                  disabled={!!mle && !mle.available}
+                  onChange={(e) => setUseMLE(e.target.checked)}
+                />
+                <span className="font-mono text-[10px] tracking-widest">
+                  USE MID-LEVEL EXCEPTION (MLE)
+                </span>
+              </label>
+              {mle && (
+                <div className="font-mono text-[10px] tracking-widest opacity-70 mt-1">
+                  {mle.available ? (
+                    <>
+                      MLE T{mle.tier} · max ${mle.maxAmount?.toFixed(1)}M / {mle.maxYears}yr
+                      {" · "}
+                      <span className="text-[var(--mustard)]">
+                        ${mle.remaining.toFixed(2)}M left this season
+                      </span>
+                      {mle.committed > 0 && (
+                        <span className="opacity-60">
+                          {" "}
+                          (already used ${mle.committed.toFixed(2)}M)
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <>MLE unavailable — team salary + holds below $92.5M</>
+                  )}
+                </div>
+              )}
+            </div>
+
             {submitError && (
               <div className="col-span-12 font-mono text-[10px] text-[var(--leather)]">
                 {submitError}

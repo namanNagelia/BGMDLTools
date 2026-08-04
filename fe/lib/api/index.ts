@@ -76,9 +76,27 @@ export interface OfferWithFlags {
   codeWord: string | null;
   status: "PENDING" | "ACCEPTED" | "REJECTED" | "WITHDRAWN";
   createdAt: string;
+  isMle: boolean;
   invalidReasons: string[];
   playerName?: string;
   playerPreviousTeam?: string;
+}
+
+export interface PendingOfferSummary {
+  id: number;
+  freeAgentId: number;
+  amount: number;
+  years: number;
+  isMle: boolean;
+}
+
+export interface MLEStatus {
+  available: boolean;
+  tier: 1 | 2 | null;
+  maxAmount: number | null;
+  maxYears: number | null;
+  committed: number;
+  remaining: number;
 }
 
 export interface SheetRow {
@@ -408,13 +426,16 @@ export const publicApi = {
     freeAgents: FreeAgent[];
     ranks: CurrentSeasonRanks;
     teams: Record<string, TeamRow>;
+    pendingOffersByTeam: Record<string, PendingOfferSummary[]>;
   }> {
-    return request<{
+    const r = await request<{
       season: Season | null;
       freeAgents: FreeAgent[];
       ranks: CurrentSeasonRanks;
       teams: Record<string, TeamRow>;
+      pendingOffersByTeam?: Record<string, PendingOfferSummary[]>;
     }>("/api/seasons/current/fas");
+    return { ...r, pendingOffersByTeam: r.pendingOffersByTeam ?? {} };
   },
 
   async renounce(
@@ -436,6 +457,7 @@ export const publicApi = {
       codeWord: string;
       amount: number;
       years: number;
+      isMLE?: boolean;
     },
   ): Promise<{ offer: OfferWithFlags; invalidReasons: string[] }> {
     return request<{ offer: OfferWithFlags; invalidReasons: string[] }>(
@@ -455,7 +477,7 @@ export const publicApi = {
   async editMyOffer(
     id: number,
     codeWord: string,
-    patch: { amount?: number; years?: number },
+    patch: { amount?: number; years?: number; isMLE?: boolean },
   ): Promise<{ offer: OfferWithFlags; invalidReasons: string[] }> {
     return request<{ offer: OfferWithFlags; invalidReasons: string[] }>(
       `/api/offers/${id}`,
@@ -472,11 +494,24 @@ export const publicApi = {
 
   async previewOffer(
     faId: number,
-    input: { teamAbbrev: string; amount: number; years: number },
-  ): Promise<{ hardViolations: string[]; warnings: string[] }> {
-    return request<{ hardViolations: string[]; warnings: string[] }>(
-      `/api/free-agents/${faId}/offers/preview`,
-      { method: "POST", body: JSON.stringify(input) },
-    );
+    input: {
+      teamAbbrev: string;
+      amount: number;
+      years: number;
+      isMLE?: boolean;
+    },
+  ): Promise<{
+    hardViolations: string[];
+    warnings: string[];
+    mle: MLEStatus;
+  }> {
+    return request<{
+      hardViolations: string[];
+      warnings: string[];
+      mle: MLEStatus;
+    }>(`/api/free-agents/${faId}/offers/preview`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
   },
 };

@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   freeAgents,
@@ -118,19 +118,30 @@ function buildPlayerIndex(
   return map;
 }
 
-/** Walk stats backward from priorSeason, counting consecutive seasons on `tid`. */
+/** Consecutive seasons up to and including priorSeason where any stat row was
+ * on `tid`. Partial (mid-season-trade) years count — bucket rows by season so
+ * within-season row ordering doesn't cause a premature break. */
 function consecutiveYearsOnTeam(
   stats: Array<{ season: number; tid: number }>,
   tid: number,
   priorSeason: number,
 ): number {
   if (!stats.length) return 0;
-  let count = 0;
-  for (let i = stats.length - 1; i >= 0; i--) {
-    const row = stats[i];
+  const tidsBySeason = new Map<number, Set<number>>();
+  for (const row of stats) {
     if (row.season > priorSeason) continue;
-    if (row.tid === tid) count++;
-    else if (count > 0) break;
+    let set = tidsBySeason.get(row.season);
+    if (!set) {
+      set = new Set();
+      tidsBySeason.set(row.season, set);
+    }
+    set.add(row.tid);
+  }
+  const seasonsDesc = [...tidsBySeason.keys()].sort((a, b) => b - a);
+  let count = 0;
+  for (const s of seasonsDesc) {
+    if (tidsBySeason.get(s)!.has(tid)) count++;
+    else break;
   }
   return count;
 }
@@ -662,16 +673,54 @@ export async function listFreeAgentsForCurrentSeason() {
       freeAgents: [],
       ranks: { market: {}, legacy: {}, winning: {} },
       teams: {},
+      pendingOffersByTeam: {},
     };
   }
 
-  const [rows, market, legacy, winning, teamRows] = await Promise.all([
-    listFreeAgentsForSeason(current.id),
-    db.select().from(marketRanks).where(eq(marketRanks.seasonId, current.id)),
-    db.select().from(legacyRanks).where(eq(legacyRanks.seasonId, current.id)),
-    db.select().from(winningRanks).where(eq(winningRanks.seasonId, current.id)),
-    db.select().from(teams).where(eq(teams.seasonId, current.id)),
-  ]);
+  const [rows, market, legacy, winning, teamRows, pendingOffers] =
+    await Promise.all([
+      listFreeAgentsForSeason(current.id),
+      db.select().from(marketRanks).where(eq(marketRanks.seasonId, current.id)),
+      db.select().from(legacyRanks).where(eq(legacyRanks.seasonId, current.id)),
+      db.select().from(winningRanks).where(eq(winningRanks.seasonId, current.id)),
+      db.select().from(teams).where(eq(teams.seasonId, current.id)),
+      db
+        .select({
+          id: offers.id,
+          teamAbbrev: offers.teamAbbrev,
+          freeAgentId: offers.freeAgentId,
+          offerAmount: offers.offerAmount,
+          offerLength: offers.offerLength,
+          isMle: offers.isMle,
+        })
+        .from(offers)
+        .where(
+          and(
+            eq(offers.offerSeason, current.id),
+            eq(offers.status, "PENDING"),
+          ),
+        ),
+    ]);
+
+  const pendingOffersByTeam: Record<
+    string,
+    Array<{
+      id: number;
+      freeAgentId: number;
+      amount: number;
+      years: number;
+      isMle: boolean;
+    }>
+  > = {};
+  for (const o of pendingOffers) {
+    (pendingOffersByTeam[o.teamAbbrev] ||= []).push({
+      id: o.id,
+      freeAgentId: o.freeAgentId,
+      amount: Number(o.offerAmount),
+      years: o.offerLength,
+      isMle: o.isMle,
+    });
+  }
 
   return {
     season: current,
@@ -682,5 +731,6 @@ export async function listFreeAgentsForCurrentSeason() {
       winning: Object.fromEntries(winning.map((w) => [w.teamAbbrev, w])),
     },
     teams: Object.fromEntries(teamRows.map((t) => [t.abbrev, t])),
+    pendingOffersByTeam,
   };
 }

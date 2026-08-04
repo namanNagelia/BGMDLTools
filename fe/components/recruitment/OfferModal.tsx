@@ -103,6 +103,7 @@ export function OfferModal({ fa, teamAbbrev, onClose, onSubmitted }: Props) {
           <OfferForm
             faId={fa.id}
             faName={fa.name}
+            faOverall={fa.overall}
             teamAbbrev={teamAbbrev}
             onSubmitted={onSubmitted}
           />

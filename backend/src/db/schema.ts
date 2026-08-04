@@ -131,4 +131,6 @@ export const offers = pgTable("offers", {
   codeWord: text("code_word"),
   status: offerStatusEnum("status").default("PENDING").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  // Mid-Level Exception flag. Backfills to false on existing rows via default.
+  isMle: boolean("is_mle").default(false).notNull(),
 });
