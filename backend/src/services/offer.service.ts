@@ -87,8 +87,16 @@ interface ValidateInput {
   amount: number;
   years: number;
   payroll: number; // current roster salary
-  activeCapHolds: number; // sum of own non-renounced FA holds
+  // Sum of own non-renounced FA holds, EXCLUDING SIGNED FAs (a signed
+  // player's contract is already in `payroll` via the BBGM re-ingest, so
+  // their hold is auto-released — counting both would double-count).
+  activeCapHolds: number;
   otherOfferTotal: number; // team's other pending offer amounts (not this FA)
+  // Portion of otherOfferTotal that uses an exception (min-salary or MLE) and
+  // shouldn't count against the soft cap for OTHER offers — mimics the fact
+  // that min-salary offers are processed last within a wave. Hard cap still
+  // counts everything.
+  otherExemptOfferTotal?: number;
   // sum of own non-renounced cap holds that would be replaced by this offer
   // or any pending offer from this team (hold vanishes once the FA signs)
   replacedCapHolds: number;
@@ -124,13 +132,14 @@ export function computeMLEViolations(input: {
   return violations;
 }
 
-/** Sum of own non-renounced FA cap holds that would be replaced by team offers. */
+/** Sum of own non-renounced FA cap holds that would be replaced by team offers.
+ * SIGNED FAs are excluded — their hold was already auto-released when they signed. */
 export function sumReplacedCapHolds(
   ownFAs: (typeof freeAgents.$inferSelect)[],
   offeredFaIds: Set<number>,
 ): number {
   return ownFAs
-    .filter((f) => !f.renounced && offeredFaIds.has(f.id))
+    .filter((f) => !f.renounced && f.faStatus !== "SIGNED" && offeredFaIds.has(f.id))
     .reduce((s, f) => s + Number(f.capHold), 0);
 }
 
@@ -144,6 +153,7 @@ export function computeInvalidReasons(input: ValidateInput): string[] {
     payroll,
     activeCapHolds,
     otherOfferTotal,
+    otherExemptOfferTotal = 0,
     replacedCapHolds,
     isMLE = false,
   } = input;
@@ -157,10 +167,10 @@ export function computeInvalidReasons(input: ValidateInput): string[] {
   const isOwn = fa.previousTeam === teamAbbrev;
   const hasBird = isOwn && !fa.renounced;
 
-  const projectedTotal =
+  const projectedForHardCap =
     totalCommitted + otherOfferTotal + amount - replacedCapHolds;
-  if (projectedTotal > HARD_CAP) {
-    const over = projectedTotal - HARD_CAP;
+  if (projectedForHardCap > HARD_CAP) {
+    const over = projectedForHardCap - HARD_CAP;
     reasons.push(
       `Over hard cap by $${over.toFixed(1)}M — must clear cap via trade before signing`,
     );
@@ -175,10 +185,15 @@ export function computeInvalidReasons(input: ValidateInput): string[] {
     const inMLE2Tier = totalCommitted > MLE1_CEIL;
     const fitsMLE1 = inMLE1Tier && amount <= MLE1_AMT && years <= MLE1_YRS;
     const fitsMLE2 = inMLE2Tier && amount <= MLE2_AMT && years <= MLE2_YRS;
-    const overSoft = projectedTotal > SOFT_CAP;
+    // Min-salary and MLE offers use exceptions and don't count against the
+    // soft cap. Subtract them from the projection so a legit under-soft offer
+    // isn't warned just because a sibling min/MLE offer is also pending.
+    const projectedForSoftCap =
+      totalCommitted + (otherOfferTotal - otherExemptOfferTotal) + amount - replacedCapHolds;
+    const overSoft = projectedForSoftCap > SOFT_CAP;
 
     if (overSoft && !isMin && !fitsMLE1 && !fitsMLE2) {
-      const overSoftBy = projectedTotal - SOFT_CAP;
+      const overSoftBy = projectedForSoftCap - SOFT_CAP;
       const why =
         fa.renounced && isOwn ? "renounced rights" : "no Bird rights";
       reasons.push(
@@ -316,14 +331,16 @@ export async function previewOffer(input: {
   }
   const payroll = ctx.team ? Number(ctx.team.totalSalary) : 0;
   const activeCapHolds = ctx.ownFAs
-    .filter((f) => !f.renounced)
+    .filter((f) => !f.renounced && f.faStatus !== "SIGNED")
     .reduce((s, f) => s + Number(f.capHold), 0);
   const totalCommitted = payroll + activeCapHolds;
 
   const teamOffers = await allTeamOffers(input.teamAbbrev, fa.seasonId);
   const pending = teamOffers.filter((o) => o.status === "PENDING");
-  const otherOfferTotal = pending
-    .filter((o) => o.freeAgentId !== fa.id)
+  const otherPending = pending.filter((o) => o.freeAgentId !== fa.id);
+  const otherOfferTotal = otherPending.reduce((s, o) => s + Number(o.offerAmount), 0);
+  const otherExemptOfferTotal = otherPending
+    .filter((o) => Number(o.offerAmount) <= MIN_SALARY || o.isMle)
     .reduce((s, o) => s + Number(o.offerAmount), 0);
   const offeredFaIds = new Set<number>([fa.id, ...pending.map((o) => o.freeAgentId)]);
   const replacedCapHolds = sumReplacedCapHolds(ctx.ownFAs, offeredFaIds);
@@ -345,6 +362,7 @@ export async function previewOffer(input: {
     payroll,
     activeCapHolds,
     otherOfferTotal,
+    otherExemptOfferTotal,
     replacedCapHolds,
     isMLE,
     otherMLECommitted,
@@ -402,7 +420,7 @@ export async function createOffer(input: {
     }
     const payroll = ctxPre.team ? Number(ctxPre.team.totalSalary) : 0;
     const activeCapHolds = ctxPre.ownFAs
-      .filter((f) => !f.renounced)
+      .filter((f) => !f.renounced && f.faStatus !== "SIGNED")
       .reduce((s, f) => s + Number(f.capHold), 0);
     const totalCommitted = payroll + activeCapHolds;
     const teamOffers = await allTeamOffers(input.teamAbbrev, fa.seasonId);
@@ -442,12 +460,16 @@ export async function createOffer(input: {
   if (!ctx) return { offer: row, invalidReasons: [] };
   const payroll = ctx.team ? Number(ctx.team.totalSalary) : 0;
   const activeCapHolds = ctx.ownFAs
-    .filter((f) => !f.renounced)
+    .filter((f) => !f.renounced && f.faStatus !== "SIGNED")
     .reduce((s, f) => s + Number(f.capHold), 0);
   const teamOffers = await allTeamOffers(input.teamAbbrev, fa.seasonId);
   const pending = teamOffers.filter((o) => o.status === "PENDING");
-  const otherOfferTotal = pending
-    .filter((o) => o.id !== row.id && o.freeAgentId !== fa.id)
+  const otherPending = pending.filter(
+    (o) => o.id !== row.id && o.freeAgentId !== fa.id,
+  );
+  const otherOfferTotal = otherPending.reduce((s, o) => s + Number(o.offerAmount), 0);
+  const otherExemptOfferTotal = otherPending
+    .filter((o) => Number(o.offerAmount) <= MIN_SALARY || o.isMle)
     .reduce((s, o) => s + Number(o.offerAmount), 0);
   const offeredFaIds = new Set<number>([fa.id, ...pending.map((o) => o.freeAgentId)]);
   const replacedCapHolds = sumReplacedCapHolds(ctx.ownFAs, offeredFaIds);
@@ -465,6 +487,7 @@ export async function createOffer(input: {
     payroll,
     activeCapHolds,
     otherOfferTotal,
+    otherExemptOfferTotal,
     replacedCapHolds,
     isMLE,
     otherMLECommitted,
@@ -509,11 +532,15 @@ async function annotate(rawOffers: Offer[]): Promise<OfferWithFlags[]> {
     if (fa && ctx) {
       const payroll = ctx.team ? Number(ctx.team.totalSalary) : 0;
       const activeHolds = ctx.ownFAs
-        .filter((f) => !f.renounced)
+        .filter((f) => !f.renounced && f.faStatus !== "SIGNED")
         .reduce((s, f) => s + Number(f.capHold), 0);
       const teamPending = pendingByTeam.get(o.teamAbbrev) ?? [];
-      const otherOfferTotal = teamPending
-        .filter((x) => x.id !== o.id && x.freeAgentId !== o.freeAgentId)
+      const otherPending = teamPending.filter(
+        (x) => x.id !== o.id && x.freeAgentId !== o.freeAgentId,
+      );
+      const otherOfferTotal = otherPending.reduce((s, x) => s + Number(x.offerAmount), 0);
+      const otherExemptOfferTotal = otherPending
+        .filter((x) => Number(x.offerAmount) <= MIN_SALARY || x.isMle)
         .reduce((s, x) => s + Number(x.offerAmount), 0);
       const offeredFaIds = new Set<number>([
         o.freeAgentId,
@@ -547,6 +574,7 @@ async function annotate(rawOffers: Offer[]): Promise<OfferWithFlags[]> {
           payroll,
           activeCapHolds: activeHolds,
           otherOfferTotal,
+          otherExemptOfferTotal,
           replacedCapHolds,
           isMLE: o.isMle,
           otherMLECommitted,
@@ -648,7 +676,7 @@ export async function updateOfferByCode(
     }
     const payroll = ctx.team ? Number(ctx.team.totalSalary) : 0;
     const activeCapHolds = ctx.ownFAs
-      .filter((f) => !f.renounced)
+      .filter((f) => !f.renounced && f.faStatus !== "SIGNED")
       .reduce((s, f) => s + Number(f.capHold), 0);
     const teamOffers = await allTeamOffers(original.teamAbbrev, fa.seasonId);
     const otherMLECommitted = teamOffers
@@ -683,12 +711,14 @@ export async function updateOfferByCode(
   if (ctx) {
     const payroll = ctx.team ? Number(ctx.team.totalSalary) : 0;
     const activeCapHolds = ctx.ownFAs
-      .filter((f) => !f.renounced)
+      .filter((f) => !f.renounced && f.faStatus !== "SIGNED")
       .reduce((s, f) => s + Number(f.capHold), 0);
     const teamOffers = await allTeamOffers(original.teamAbbrev, fa.seasonId);
     const pending = teamOffers.filter((o) => o.status === "PENDING");
-    const otherOfferTotal = pending
-      .filter((o) => o.id !== id && o.freeAgentId !== fa.id)
+    const otherPending = pending.filter((o) => o.id !== id && o.freeAgentId !== fa.id);
+    const otherOfferTotal = otherPending.reduce((s, o) => s + Number(o.offerAmount), 0);
+    const otherExemptOfferTotal = otherPending
+      .filter((o) => Number(o.offerAmount) <= MIN_SALARY || o.isMle)
       .reduce((s, o) => s + Number(o.offerAmount), 0);
     const offeredFaIds = new Set<number>([fa.id, ...pending.map((o) => o.freeAgentId)]);
     const replacedCapHolds = sumReplacedCapHolds(ctx.ownFAs, offeredFaIds);
@@ -705,6 +735,7 @@ export async function updateOfferByCode(
       payroll,
       activeCapHolds,
       otherOfferTotal,
+      otherExemptOfferTotal,
       replacedCapHolds,
       isMLE: newIsMLE,
       otherMLECommitted,

@@ -67,10 +67,13 @@ export function TeamCard({
     }
   }
 
-  // cap math — renounced FAs do NOT count toward cap holds
+  // cap math — renounced FAs do NOT count toward cap holds. SIGNED FAs are
+  // auto-renounced: their new contract is already in team.totalSalary (via
+  // the BBGM re-ingest), so counting their old cap hold on top would
+  // double-count. Signed players' rights cannot be restored.
   const salary = team ? Number(team.totalSalary) : 0;
-  const activeHolds = ownFAs.filter((f) => !f.renounced);
-  const renouncedHolds = ownFAs.filter((f) => f.renounced);
+  const activeHolds = ownFAs.filter((f) => !f.renounced && f.faStatus !== "SIGNED");
+  const renouncedHolds = ownFAs.filter((f) => f.renounced && f.faStatus !== "SIGNED");
   const capHolds = activeHolds.reduce((s, f) => s + Number(f.capHold || 0), 0);
   const renouncedSavings = renouncedHolds.reduce(
     (s, f) => s + Number(f.capHold || 0),
@@ -354,26 +357,35 @@ export function TeamCard({
                           {f.faStatus}
                         </td>
                         <td className="px-3 py-1 text-right">
-                          <button
-                            onClick={() => handleRenounce(f)}
-                            disabled={isPending}
-                            title={
-                              f.renounced
-                                ? "Restore Bird/RFA rights and put the cap hold back on the books"
-                                : "Renounce rights to clear the cap hold (reversible)"
-                            }
-                            className={`font-mono text-[10px] tracking-widest px-2 py-0.5 border transition-colors disabled:opacity-40 ${
-                              f.renounced
-                                ? "border-[var(--mustard)] text-[var(--mustard)] hover:bg-[var(--mustard)] hover:text-[var(--ink)]"
-                                : "rule hover:border-[var(--leather)] hover:text-[var(--leather)]"
-                            }`}
-                          >
-                            {isPending
-                              ? "…"
-                              : f.renounced
-                                ? "RESTORE"
-                                : "RENOUNCE"}
-                          </button>
+                          {f.faStatus === "SIGNED" ? (
+                            <span
+                              className="font-mono text-[10px] tracking-widest opacity-50"
+                              title="Signed players are auto-renounced — cap hold cleared and cannot be restored."
+                            >
+                              SIGNED
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => handleRenounce(f)}
+                              disabled={isPending}
+                              title={
+                                f.renounced
+                                  ? "Restore Bird/RFA rights and put the cap hold back on the books"
+                                  : "Renounce rights to clear the cap hold (reversible)"
+                              }
+                              className={`font-mono text-[10px] tracking-widest px-2 py-0.5 border transition-colors disabled:opacity-40 ${
+                                f.renounced
+                                  ? "border-[var(--mustard)] text-[var(--mustard)] hover:bg-[var(--mustard)] hover:text-[var(--ink)]"
+                                  : "rule hover:border-[var(--leather)] hover:text-[var(--leather)]"
+                              }`}
+                            >
+                              {isPending
+                                ? "…"
+                                : f.renounced
+                                  ? "RESTORE"
+                                  : "RENOUNCE"}
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );
