@@ -77,6 +77,7 @@ export interface OfferWithFlags {
   status: "PENDING" | "ACCEPTED" | "REJECTED" | "WITHDRAWN";
   createdAt: string;
   isMle: boolean;
+  isDoubleDip: boolean;
   invalidReasons: string[];
   playerName?: string;
   playerPreviousTeam?: string;
@@ -88,6 +89,7 @@ export interface PendingOfferSummary {
   amount: number;
   years: number;
   isMle: boolean;
+  isDoubleDip: boolean;
 }
 
 export interface MLEStatus {
@@ -98,6 +100,7 @@ export interface MLEStatus {
   committed: number;
   remaining: number;
 }
+
 
 export interface SheetRow {
   [columnName: string]: string | number | boolean | null;
@@ -458,6 +461,7 @@ export const publicApi = {
       amount: number;
       years: number;
       isMLE?: boolean;
+      isDoubleDip?: boolean;
     },
   ): Promise<{ offer: OfferWithFlags; invalidReasons: string[] }> {
     return request<{ offer: OfferWithFlags; invalidReasons: string[] }>(
@@ -477,7 +481,12 @@ export const publicApi = {
   async editMyOffer(
     id: number,
     codeWord: string,
-    patch: { amount?: number; years?: number; isMLE?: boolean },
+    patch: {
+      amount?: number;
+      years?: number;
+      isMLE?: boolean;
+      isDoubleDip?: boolean;
+    },
   ): Promise<{ offer: OfferWithFlags; invalidReasons: string[] }> {
     return request<{ offer: OfferWithFlags; invalidReasons: string[] }>(
       `/api/offers/${id}`,

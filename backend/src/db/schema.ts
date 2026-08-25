@@ -133,4 +133,8 @@ export const offers = pgTable("offers", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   // Mid-Level Exception flag. Backfills to false on existing rows via default.
   isMle: boolean("is_mle").default(false).notNull(),
+  // Rule 6 RFA exception: the GM declares this offer is riding on money
+  // already tied up in their offers to restricted free agents. Declarative
+  // only — the cap checks ignore it; the mod reads it when resolving signings.
+  isDoubleDip: boolean("is_double_dip").default(false).notNull(),
 });

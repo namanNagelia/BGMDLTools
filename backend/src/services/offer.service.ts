@@ -399,6 +399,7 @@ export async function createOffer(input: {
   gm: string;
   codeWord: string;
   isMLE?: boolean;
+  isDoubleDip?: boolean;
 }): Promise<{ offer: Offer; invalidReasons: string[] }> {
   const [fa] = await db
     .select()
@@ -453,6 +454,7 @@ export async function createOffer(input: {
       offerGm: input.gm,
       codeWord: input.codeWord.trim(),
       isMle: isMLE,
+      isDoubleDip: input.isDoubleDip === true,
     })
     .returning();
 
@@ -647,7 +649,12 @@ async function loadOfferIfCodeMatches(
 export async function updateOfferByCode(
   id: number,
   code: string,
-  patch: { amount?: number; years?: number; isMLE?: boolean },
+  patch: {
+    amount?: number;
+    years?: number;
+    isMLE?: boolean;
+    isDoubleDip?: boolean;
+  },
 ): Promise<{ offer: Offer; invalidReasons: string[] } | null> {
   const original = await loadOfferIfCodeMatches(id, code);
   if (!original) return null;
@@ -663,6 +670,7 @@ export async function updateOfferByCode(
   const newAmount = patch.amount ?? Number(original.offerAmount);
   const newYears = patch.years ?? original.offerLength;
   const newIsMLE = patch.isMLE ?? original.isMle;
+  const newIsDoubleDip = patch.isDoubleDip ?? original.isDoubleDip;
 
   const hardViolations = computeHardViolations(fa, newAmount, newYears);
 
@@ -703,6 +711,7 @@ export async function updateOfferByCode(
       offerAmount: newAmount.toFixed(2),
       offerLength: newYears,
       isMle: newIsMLE,
+      isDoubleDip: newIsDoubleDip,
     })
     .where(eq(offers.id, id))
     .returning();

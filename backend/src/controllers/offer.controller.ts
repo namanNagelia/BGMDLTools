@@ -12,6 +12,7 @@ const createSchema = z.object({
   amount: z.coerce.number().positive(),
   years: z.coerce.number().int().positive(),
   isMLE: z.boolean().optional(),
+  isDoubleDip: z.boolean().optional(),
 });
 
 const previewSchema = z.object({
@@ -132,6 +133,7 @@ const editSchema = z.object({
   amount: z.coerce.number().positive().optional(),
   years: z.coerce.number().int().positive().optional(),
   isMLE: z.boolean().optional(),
+  isDoubleDip: z.boolean().optional(),
 });
 
 export async function editByCode(
@@ -150,6 +152,7 @@ export async function editByCode(
       amount: body.data.amount,
       years: body.data.years,
       isMLE: body.data.isMLE,
+      isDoubleDip: body.data.isDoubleDip,
     });
     if (!result) {
       res.status(404).json({ error: "not_found_or_wrong_code" });

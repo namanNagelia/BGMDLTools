@@ -168,6 +168,14 @@ export function MyOffersPanel() {
                           MLE
                         </span>
                       )}
+                      {o.isDoubleDip && (
+                        <span
+                          className="ml-1.5 font-mono text-[9px] tracking-widest text-[var(--leather)] border border-[var(--leather)] px-1 py-[1px]"
+                          title="Riding on your pending RFA offers — void if one of them signs"
+                        >
+                          2×DIP
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-1.5 text-right tabular-nums">
                       {editing ? (

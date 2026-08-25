@@ -46,6 +46,7 @@ export function OfferForm({
   const [gm, setGm] = useState("");
   const [codeWord, setCodeWord] = useState("");
   const [useMLE, setUseMLE] = useState(false);
+  const [useDoubleDip, setUseDoubleDip] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submittedOk, setSubmittedOk] = useState(false);
@@ -136,6 +137,7 @@ export function OfferForm({
         amount: amt,
         years: yrs,
         isMLE: useMLE,
+        isDoubleDip: useDoubleDip,
       });
       if (typeof window !== "undefined") {
         if (gm.trim()) window.localStorage.setItem("gmName", gm.trim());
@@ -145,6 +147,7 @@ export function OfferForm({
       setAmount("");
       setYears("");
       setUseMLE(false);
+      setUseDoubleDip(false);
       setHardViolations([]);
       setWarnings([]);
       setSubmittedOk(true);
@@ -331,6 +334,31 @@ export function OfferForm({
                   ) : (
                     <>MLE unavailable — team salary + holds below $92.5M</>
                   )}
+                </div>
+              )}
+            </div>
+
+            {/* DOUBLE-DIP toggle row ---------------------------------- */}
+            <div className="col-span-12">
+              <label
+                className={`inline-flex items-center gap-2 border rule px-2 py-1.5 cursor-pointer select-none ${
+                  useDoubleDip ? "border-[var(--leather)] text-[var(--leather)]" : ""
+                }`}
+                title="Mark this offer as riding on money already tied up in your offers to restricted free agents. Void if one of those RFAs signs with you."
+              >
+                <input
+                  type="checkbox"
+                  className="accent-[var(--leather)]"
+                  checked={useDoubleDip}
+                  onChange={(e) => setUseDoubleDip(e.target.checked)}
+                />
+                <span className="font-mono text-[10px] tracking-widest">
+                  DOUBLE DIP (RFA EXCEPTION)
+                </span>
+              </label>
+              {useDoubleDip && (
+                <div className="font-mono text-[10px] tracking-widest text-[var(--mustard)] mt-1">
+                  ⚠ VOID IF ANY OF YOUR RFA OFFERS SIGNS
                 </div>
               )}
             </div>
