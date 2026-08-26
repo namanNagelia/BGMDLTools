@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ApiError,
   publicApi,
   type CurrentSeasonRanks,
   type FreeAgent,
+  type PendingOfferSummary,
   type Season,
+  type TeamRow,
 } from "@/lib/api";
 import { TeamCard } from "./TeamCard";
 import { OfferModal } from "./OfferModal";
@@ -89,19 +91,27 @@ export function RecruitmentBoard() {
     season: Season | null;
     freeAgents: FreeAgent[];
     ranks: CurrentSeasonRanks;
-    teams: Record<string, import("@/lib/api").TeamRow>;
-    pendingOffersByTeam: Record<string, import("@/lib/api").PendingOfferSummary[]>;
+    teams: Record<string, TeamRow>;
   }>({
     season: null,
     freeAgents: [],
     ranks: { market: {}, legacy: {}, winning: {} },
     teams: {},
-    pendingOffersByTeam: {},
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [gmTeam, setGmTeam] = useState<string>("");
+
+  // The private key is the only thing that proves which team is yours, so the
+  // pending-offer book lives behind it rather than in the public payload.
+  const [gmCode, setGmCode] = useState("");
+  const [myPendingByTeam, setMyPendingByTeam] = useState<Record<
+    string,
+    PendingOfferSummary[]
+  > | null>(null);
+  const pendingUnlocked =
+    myPendingByTeam !== null && Object.hasOwn(myPendingByTeam, gmTeam);
 
   const [query, setQuery] = useState("");
   const [posFilter, setPosFilter] = useState<string>("ALL");
@@ -116,11 +126,23 @@ export function RecruitmentBoard() {
   const [offerFor, setOfferFor] = useState<FreeAgent | null>(null);
   const [tab, setTab] = useState<"roster" | "fa">("fa");
 
-  // hydrate gmTeam from localStorage on mount
+  // hydrate gmTeam + private key from localStorage on mount
   useEffect(() => {
     if (typeof window !== "undefined") {
       const stored = window.localStorage.getItem(TEAM_STORAGE_KEY);
       if (stored) setGmTeam(stored);
+      const storedCode = window.localStorage.getItem("gmCodeWord");
+      if (storedCode) setGmCode(storedCode);
+    }
+  }, []);
+
+  const refreshMyPending = useCallback(async (code: string) => {
+    if (!code.trim()) return;
+    try {
+      const res = await publicApi.lookupMyOffers(code.trim());
+      setMyPendingByTeam(res.pendingOffersByTeam);
+    } catch {
+      // leave the previous book in place — a failed refresh shouldn't re-lock
     }
   }, []);
 
@@ -309,14 +331,21 @@ export function RecruitmentBoard() {
             num: 5,
             title: "Send an offer",
             body: (
-              <>Click <b>OFFER</b> on any row. Enter amount ($M/yr), years, your GM name, and a <b>private key</b> only you know. The private key isn't visible to other GMs and isn't how the mod identifies you (that's your GM name) — it's the password you'll type into <b>MY OFFERS</b> to edit or withdraw later. Toggle <b>USE MLE</b> if you're over the soft cap. Live warnings show if your cap doesn't fit — submit anyway (trades count).</>
+              <>Click <b>OFFER</b> on any row. Enter amount ($M/yr), years, your GM name, and a <b>private key</b> only you know. The private key isn&apos;t visible to other GMs and isn&apos;t how the mod identifies you (that&apos;s your GM name) — it&apos;s the password you&apos;ll type into <b>MY OFFERS</b> to edit or withdraw later. Toggle <b>USE MLE</b> if you&apos;re over the soft cap. Live warnings show if your cap doesn&apos;t fit — submit anyway (trades count).</>
             ),
           },
           {
             num: 6,
+            title: "MLE rules",
+            body: (
+              <>Pick <b>either tier</b>: T1 ($7.5M / 4yr) or T2 ($4.5M / 3yr). You can offer a tier your cap doesn&apos;t qualify for — you just get a warning, because a trade can change your cap before signings. One MLE per team, though. It&apos;s used or it isn&apos;t, and it can&apos;t be split across players. Withdraw the old MLE offer before flagging a new one.</>
+            ),
+          },
+          {
+            num: 7,
             title: "Wait for the call",
             body: (
-              <>Mods process offers using the FA value calc. You won't see other teams' offers. If you sign someone, they show up in the next ingest as part of your roster.</>
+              <>Mods process offers using the FA value calc. You won&apos;t see other teams&apos; offers and they won&apos;t see yours — not the count, not the money. Renouncements are public. If you sign someone, they show up in the next ingest as part of your roster.</>
             ),
           },
         ]}
@@ -381,7 +410,8 @@ export function RecruitmentBoard() {
             ranks={data.ranks}
             teams={data.teams}
             ownFAs={data.freeAgents.filter((f) => f.previousTeam === gmTeam)}
-            pendingOffers={data.pendingOffersByTeam[gmTeam] ?? []}
+            pendingOffers={myPendingByTeam?.[gmTeam] ?? []}
+            pendingUnlocked={pendingUnlocked}
             view="roster"
             onRenounce={async (faId, renounced) => {
               try {
@@ -408,7 +438,11 @@ export function RecruitmentBoard() {
       {/* FA TAB ------------------------------------------------------- */}
       {tab === "fa" && (
         <>
-          <MyOffersPanel />
+          <MyOffersPanel
+            code={gmCode}
+            onCodeChange={setGmCode}
+            onUnlocked={setMyPendingByTeam}
+          />
 
           {gmTeam && (
             <TeamCard
@@ -416,7 +450,8 @@ export function RecruitmentBoard() {
               ranks={data.ranks}
               teams={data.teams}
               ownFAs={data.freeAgents.filter((f) => f.previousTeam === gmTeam)}
-              pendingOffers={data.pendingOffersByTeam[gmTeam] ?? []}
+              pendingOffers={myPendingByTeam?.[gmTeam] ?? []}
+              pendingUnlocked={pendingUnlocked}
               view="fa"
               onRenounce={async (faId, renounced) => {
                 try {
@@ -728,13 +763,12 @@ export function RecruitmentBoard() {
           fa={offerFor}
           teamAbbrev={gmTeam}
           onClose={() => setOfferFor(null)}
-          onSubmitted={() => {
-            // refresh pendingOffersByTeam so the AFTER SIGNINGS card
-            // reflects the new offer
-            publicApi
-              .currentSeasonFAs()
-              .then((d) => setData(d))
-              .catch(() => {});
+          onSubmitted={(codeWord) => {
+            // refresh the key-gated book so the AFTER SIGNINGS card reflects
+            // the new offer
+            const code = codeWord ?? gmCode;
+            if (code) setGmCode(code);
+            void refreshMyPending(code);
           }}
         />
       )}

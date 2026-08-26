@@ -1,14 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ApiError, publicApi, type MLEStatus } from "@/lib/api";
+import { ApiError, publicApi, type MLEStatus, type MLETier } from "@/lib/api";
 
 interface Props {
   faId: number;
   faName: string;
   faOverall: number;
   teamAbbrev: string;
-  onSubmitted?: () => void;
+  /** Passed the key used, so the caller can unlock the team's pending book. */
+  onSubmitted?: (codeWord: string) => void;
 }
 
 /** Mirrors backend OVR_MIN_TABLE in offer.service.ts — keep in sync. */
@@ -46,6 +47,8 @@ export function OfferForm({
   const [gm, setGm] = useState("");
   const [codeWord, setCodeWord] = useState("");
   const [useMLE, setUseMLE] = useState(false);
+  const [mleTier, setMleTier] = useState<MLETier>(1);
+  const [tierTouched, setTierTouched] = useState(false);
   const [useDoubleDip, setUseDoubleDip] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -87,6 +90,8 @@ export function OfferForm({
           amount: amt,
           years: yrs,
           isMLE: useMLE,
+          mleTier: useMLE ? mleTier : null,
+          codeWord: codeWord.trim() || undefined,
         });
         setHardViolations(r.hardViolations);
         setWarnings(r.warnings);
@@ -102,13 +107,14 @@ export function OfferForm({
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [faId, teamAbbrev, amount, years, useMLE]);
+  }, [faId, teamAbbrev, amount, years, useMLE, mleTier, codeWord]);
 
-  // If the team becomes MLE-ineligible, drop the toggle so the user isn't
-  // stuck with an offer that will hard-fail on submit.
+  // Default the tier to whatever the team's cap qualifies for — but only until
+  // the GM picks one themselves. Both tiers stay selectable either way; a
+  // trade can move the team into a different band before signings.
   useEffect(() => {
-    if (useMLE && mle && !mle.available) setUseMLE(false);
-  }, [useMLE, mle]);
+    if (!tierTouched && mle?.eligibleTier) setMleTier(mle.eligibleTier);
+  }, [tierTouched, mle?.eligibleTier]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -137,6 +143,7 @@ export function OfferForm({
         amount: amt,
         years: yrs,
         isMLE: useMLE,
+        mleTier: useMLE ? mleTier : null,
         isDoubleDip: useDoubleDip,
       });
       if (typeof window !== "undefined") {
@@ -147,11 +154,12 @@ export function OfferForm({
       setAmount("");
       setYears("");
       setUseMLE(false);
+      setTierTouched(false);
       setUseDoubleDip(false);
       setHardViolations([]);
       setWarnings([]);
       setSubmittedOk(true);
-      onSubmitted?.();
+      onSubmitted?.(codeTrim);
       setTimeout(() => setSubmittedOk(false), 4000);
     } catch (err) {
       if (err instanceof ApiError && err.status === 400) {
@@ -294,45 +302,71 @@ export function OfferForm({
 
             {/* MLE toggle row --------------------------------------- */}
             <div className="col-span-12">
-              <label
-                className={`inline-flex items-center gap-2 border rule px-2 py-1.5 cursor-pointer select-none ${
-                  useMLE ? "border-[var(--mustard)] text-[var(--mustard)]" : ""
-                } ${mle && !mle.available ? "opacity-50 cursor-not-allowed" : ""}`}
-                title={
-                  mle && !mle.available
-                    ? "MLE not available — team salary + holds below $92.5M"
-                    : "Use the Mid-Level Exception to sign over the soft cap"
-                }
-              >
-                <input
-                  type="checkbox"
-                  className="accent-[var(--mustard)]"
-                  checked={useMLE}
-                  disabled={!!mle && !mle.available}
-                  onChange={(e) => setUseMLE(e.target.checked)}
-                />
-                <span className="font-mono text-[10px] tracking-widest">
-                  USE MID-LEVEL EXCEPTION (MLE)
-                </span>
-              </label>
+              <div className="flex flex-wrap items-center gap-2">
+                <label
+                  className={`inline-flex items-center gap-2 border rule px-2 py-1.5 cursor-pointer select-none ${
+                    useMLE ? "border-[var(--mustard)] text-[var(--mustard)]" : ""
+                  }`}
+                  title="Use the Mid-Level Exception to sign over the soft cap. Either tier can be offered — if your cap doesn't qualify yet, you'll get a warning, not a block."
+                >
+                  <input
+                    type="checkbox"
+                    className="accent-[var(--mustard)]"
+                    checked={useMLE}
+                    onChange={(e) => setUseMLE(e.target.checked)}
+                  />
+                  <span className="font-mono text-[10px] tracking-widest">
+                    USE MID-LEVEL EXCEPTION (MLE)
+                  </span>
+                </label>
+
+                {useMLE &&
+                  (mle?.tiers ?? []).map((t) => {
+                    const active = mleTier === t.tier;
+                    return (
+                      <button
+                        key={t.tier}
+                        type="button"
+                        onClick={() => {
+                          setTierTouched(true);
+                          setMleTier(t.tier);
+                        }}
+                        title={
+                          t.eligible
+                            ? "Your cap position qualifies for this tier"
+                            : "Your cap position doesn't qualify for this tier right now — allowed, but flagged"
+                        }
+                        className={`font-mono text-[10px] tracking-widest px-2 py-1.5 border transition-colors ${
+                          active
+                            ? "border-[var(--mustard)] text-[var(--mustard)] bg-[color:rgba(217,166,55,0.12)]"
+                            : "rule opacity-70 hover:opacity-100"
+                        }`}
+                      >
+                        T{t.tier} · ${t.maxAmount.toFixed(1)}M / {t.maxYears}YR
+                        {t.eligible ? " ✓" : ""}
+                      </button>
+                    );
+                  })}
+              </div>
+
               {mle && (
                 <div className="font-mono text-[10px] tracking-widest opacity-70 mt-1">
-                  {mle.available ? (
-                    <>
-                      MLE T{mle.tier} · max ${mle.maxAmount?.toFixed(1)}M / {mle.maxYears}yr
+                  {mle.used ? (
+                    <span className="text-[var(--leather)]">
+                      MLE ALREADY USED
+                      {mle.usedOn?.playerName ? ` ON ${mle.usedOn.playerName.toUpperCase()}` : ""}
+                      {mle.usedOn?.status === "ACCEPTED" ? " (SIGNED)" : ""}
                       {" · "}
-                      <span className="text-[var(--mustard)]">
-                        ${mle.remaining.toFixed(2)}M left this season
-                      </span>
-                      {mle.committed > 0 && (
-                        <span className="opacity-60">
-                          {" "}
-                          (already used ${mle.committed.toFixed(2)}M)
-                        </span>
-                      )}
-                    </>
+                      <span className="opacity-70">ONE MLE PER TEAM</span>
+                    </span>
                   ) : (
-                    <>MLE unavailable — team salary + holds below $92.5M</>
+                    <>
+                      <span className="text-[var(--mustard)]">MLE AVAILABLE</span>
+                      {" · ONE PER TEAM · "}
+                      {mle.eligibleTier
+                        ? `YOUR CAP FITS T${mle.eligibleTier}`
+                        : "YOUR CAP IS UNDER $92.5M — EITHER TIER STILL SUBMITS, JUST FLAGGED"}
+                    </>
                   )}
                 </div>
               )}

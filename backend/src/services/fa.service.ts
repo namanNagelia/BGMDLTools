@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   freeAgents,
@@ -673,54 +673,20 @@ export async function listFreeAgentsForCurrentSeason() {
       freeAgents: [],
       ranks: { market: {}, legacy: {}, winning: {} },
       teams: {},
-      pendingOffersByTeam: {},
     };
   }
 
-  const [rows, market, legacy, winning, teamRows, pendingOffers] =
-    await Promise.all([
-      listFreeAgentsForSeason(current.id),
-      db.select().from(marketRanks).where(eq(marketRanks.seasonId, current.id)),
-      db.select().from(legacyRanks).where(eq(legacyRanks.seasonId, current.id)),
-      db.select().from(winningRanks).where(eq(winningRanks.seasonId, current.id)),
-      db.select().from(teams).where(eq(teams.seasonId, current.id)),
-      db
-        .select({
-          id: offers.id,
-          teamAbbrev: offers.teamAbbrev,
-          freeAgentId: offers.freeAgentId,
-          offerAmount: offers.offerAmount,
-          offerLength: offers.offerLength,
-          isMle: offers.isMle,
-        })
-        .from(offers)
-        .where(
-          and(
-            eq(offers.offerSeason, current.id),
-            eq(offers.status, "PENDING"),
-          ),
-        ),
-    ]);
-
-  const pendingOffersByTeam: Record<
-    string,
-    Array<{
-      id: number;
-      freeAgentId: number;
-      amount: number;
-      years: number;
-      isMle: boolean;
-    }>
-  > = {};
-  for (const o of pendingOffers) {
-    (pendingOffersByTeam[o.teamAbbrev] ||= []).push({
-      id: o.id,
-      freeAgentId: o.freeAgentId,
-      amount: Number(o.offerAmount),
-      years: o.offerLength,
-      isMle: o.isMle,
-    });
-  }
+  // NOTE: pending offers are deliberately absent from this payload. Who has
+  // renounced whom is public; how many offers a team has out and what they add
+  // up to is not. GMs get their own book from /api/offers/lookup, which is
+  // gated on their private key.
+  const [rows, market, legacy, winning, teamRows] = await Promise.all([
+    listFreeAgentsForSeason(current.id),
+    db.select().from(marketRanks).where(eq(marketRanks.seasonId, current.id)),
+    db.select().from(legacyRanks).where(eq(legacyRanks.seasonId, current.id)),
+    db.select().from(winningRanks).where(eq(winningRanks.seasonId, current.id)),
+    db.select().from(teams).where(eq(teams.seasonId, current.id)),
+  ]);
 
   return {
     season: current,
@@ -731,6 +697,5 @@ export async function listFreeAgentsForCurrentSeason() {
       winning: Object.fromEntries(winning.map((w) => [w.teamAbbrev, w])),
     },
     teams: Object.fromEntries(teamRows.map((t) => [t.abbrev, t])),
-    pendingOffersByTeam,
   };
 }

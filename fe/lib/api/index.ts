@@ -77,6 +77,7 @@ export interface OfferWithFlags {
   status: "PENDING" | "ACCEPTED" | "REJECTED" | "WITHDRAWN";
   createdAt: string;
   isMle: boolean;
+  mleTier: MLETier | null;
   isDoubleDip: boolean;
   invalidReasons: string[];
   playerName?: string;
@@ -89,16 +90,33 @@ export interface PendingOfferSummary {
   amount: number;
   years: number;
   isMle: boolean;
+  mleTier: MLETier | null;
   isDoubleDip: boolean;
 }
 
+export type MLETier = 1 | 2;
+
+export interface MLETierInfo {
+  tier: MLETier;
+  maxAmount: number;
+  maxYears: number;
+  /** Whether the team's cap position naturally qualifies. Either tier can be
+   * offered regardless — a mismatch is a warning, since trades move the cap. */
+  eligible: boolean;
+}
+
 export interface MLEStatus {
-  available: boolean;
-  tier: 1 | 2 | null;
-  maxAmount: number | null;
-  maxYears: number | null;
-  committed: number;
-  remaining: number;
+  eligibleTier: MLETier | null;
+  tiers: MLETierInfo[];
+  /** The MLE is one indivisible slot: used or not used. */
+  used: boolean;
+  usedOn: {
+    offerId: number;
+    freeAgentId: number;
+    playerName: string | null;
+    tier: MLETier | null;
+    status: "PENDING" | "ACCEPTED";
+  } | null;
 }
 
 
@@ -424,21 +442,20 @@ export const seasons = {
 
 // ---- Public (no auth) -----------------------------------------------------
 export const publicApi = {
+  /** Public board. Carries no pending-offer data by design — that comes from
+   * `lookupMyOffers`, keyed on the GM's private key. */
   async currentSeasonFAs(): Promise<{
     season: Season | null;
     freeAgents: FreeAgent[];
     ranks: CurrentSeasonRanks;
     teams: Record<string, TeamRow>;
-    pendingOffersByTeam: Record<string, PendingOfferSummary[]>;
   }> {
-    const r = await request<{
+    return request<{
       season: Season | null;
       freeAgents: FreeAgent[];
       ranks: CurrentSeasonRanks;
       teams: Record<string, TeamRow>;
-      pendingOffersByTeam?: Record<string, PendingOfferSummary[]>;
     }>("/api/seasons/current/fas");
-    return { ...r, pendingOffersByTeam: r.pendingOffersByTeam ?? {} };
   },
 
   async renounce(
@@ -461,6 +478,7 @@ export const publicApi = {
       amount: number;
       years: number;
       isMLE?: boolean;
+      mleTier?: MLETier | null;
       isDoubleDip?: boolean;
     },
   ): Promise<{ offer: OfferWithFlags; invalidReasons: string[] }> {
@@ -470,12 +488,23 @@ export const publicApi = {
     );
   },
 
-  async lookupMyOffers(codeWord: string): Promise<OfferWithFlags[]> {
-    const res = await request<{ offers: OfferWithFlags[] }>("/api/offers/lookup", {
+  /** The private key doubles as proof of team identity: it returns the GM's own
+   * offers plus the pending book for every team that key has filed under. */
+  async lookupMyOffers(codeWord: string): Promise<{
+    offers: OfferWithFlags[];
+    pendingOffersByTeam: Record<string, PendingOfferSummary[]>;
+  }> {
+    const res = await request<{
+      offers: OfferWithFlags[];
+      pendingOffersByTeam?: Record<string, PendingOfferSummary[]>;
+    }>("/api/offers/lookup", {
       method: "POST",
       body: JSON.stringify({ codeWord }),
     });
-    return res.offers;
+    return {
+      offers: res.offers,
+      pendingOffersByTeam: res.pendingOffersByTeam ?? {},
+    };
   },
 
   async editMyOffer(
@@ -485,6 +514,7 @@ export const publicApi = {
       amount?: number;
       years?: number;
       isMLE?: boolean;
+      mleTier?: MLETier | null;
       isDoubleDip?: boolean;
     },
   ): Promise<{ offer: OfferWithFlags; invalidReasons: string[] }> {
@@ -508,16 +538,21 @@ export const publicApi = {
       amount: number;
       years: number;
       isMLE?: boolean;
+      mleTier?: MLETier | null;
+      /** Sent so the projection can include the team's own pending offers. */
+      codeWord?: string;
     },
   ): Promise<{
     hardViolations: string[];
     warnings: string[];
     mle: MLEStatus;
+    pendingVisible: boolean;
   }> {
     return request<{
       hardViolations: string[];
       warnings: string[];
       mle: MLEStatus;
+      pendingVisible: boolean;
     }>(`/api/free-agents/${faId}/offers/preview`, {
       method: "POST",
       body: JSON.stringify(input),

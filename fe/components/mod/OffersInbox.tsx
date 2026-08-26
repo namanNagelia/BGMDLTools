@@ -339,7 +339,25 @@ export function OffersInbox() {
                               flagged ? "bg-[color:rgba(217,166,55,0.10)]" : ""
                             }`}
                           >
-                            <td className="px-3 py-1.5 font-bold">{o.teamAbbrev}</td>
+                            <td className="px-3 py-1.5 font-bold whitespace-nowrap">
+                              {o.teamAbbrev}
+                              {o.isMle && (
+                                <span
+                                  className="ml-1.5 font-mono text-[9px] font-normal tracking-widest text-[var(--mustard)] border border-[var(--mustard)] px-1 py-[1px]"
+                                  title="Declared as this team's Mid-Level Exception — one per team, used or not used"
+                                >
+                                  MLE{o.mleTier ? ` T${o.mleTier}` : ""}
+                                </span>
+                              )}
+                              {o.isDoubleDip && (
+                                <span
+                                  className="ml-1.5 font-mono text-[9px] font-normal tracking-widest text-[var(--leather)] border border-[var(--leather)] px-1 py-[1px]"
+                                  title="Riding on the team's pending RFA offers — void if one of them signs"
+                                >
+                                  2×DIP
+                                </span>
+                              )}
+                            </td>
                             <td className="px-3 py-1.5 opacity-80">
                               <div>{o.offerGm}</div>
                               {o.codeWord && (

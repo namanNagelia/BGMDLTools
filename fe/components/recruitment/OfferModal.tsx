@@ -8,7 +8,7 @@ interface Props {
   fa: FreeAgent;
   teamAbbrev: string;
   onClose: () => void;
-  onSubmitted: () => void;
+  onSubmitted: (codeWord: string) => void;
 }
 
 export function OfferModal({ fa, teamAbbrev, onClose, onSubmitted }: Props) {

@@ -1,10 +1,23 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
-import { ApiError, publicApi, type OfferWithFlags } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  ApiError,
+  publicApi,
+  type OfferWithFlags,
+  type PendingOfferSummary,
+} from "@/lib/api";
 
-export function MyOffersPanel() {
-  const [code, setCode] = useState("");
+interface Props {
+  code: string;
+  onCodeChange: (code: string) => void;
+  /** Hands the unlocked pending book back up so the cap projection can use it. */
+  onUnlocked?: (
+    pendingOffersByTeam: Record<string, PendingOfferSummary[]>,
+  ) => void;
+}
+
+export function MyOffersPanel({ code, onCodeChange, onUnlocked }: Props) {
   const [submitted, setSubmitted] = useState(false);
   const [offers, setOffers] = useState<OfferWithFlags[]>([]);
   const [loading, setLoading] = useState(false);
@@ -14,30 +27,39 @@ export function MyOffersPanel() {
   const [editYears, setEditYears] = useState("");
   const [busyId, setBusyId] = useState<number | null>(null);
 
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const stored = window.localStorage.getItem("gmCodeWord");
-      if (stored) setCode(stored);
-    }
-  }, []);
+  const unlockedRef = useRef(onUnlocked);
+  unlockedRef.current = onUnlocked;
 
-  async function fetchMine(forCode: string = code) {
-    if (!forCode.trim()) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const list = await publicApi.lookupMyOffers(forCode.trim());
-      setOffers(list);
-      setSubmitted(true);
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem("gmCodeWord", forCode.trim());
+  const fetchMine = useCallback(
+    async (forCode: string) => {
+      if (!forCode.trim()) return;
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await publicApi.lookupMyOffers(forCode.trim());
+        setOffers(res.offers);
+        setSubmitted(true);
+        unlockedRef.current?.(res.pendingOffersByTeam);
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem("gmCodeWord", forCode.trim());
+        }
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message.toUpperCase() : "LOOKUP FAILED");
+      } finally {
+        setLoading(false);
       }
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message.toUpperCase() : "LOOKUP FAILED");
-    } finally {
-      setLoading(false);
-    }
-  }
+    },
+    [],
+  );
+
+  // A key remembered from a previous visit unlocks the board on load, so the
+  // cap projection isn't blank until the GM re-types it.
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (autoRan.current || !code.trim()) return;
+    autoRan.current = true;
+    void fetchMine(code);
+  }, [code, fetchMine]);
 
   function startEdit(o: OfferWithFlags) {
     setEditingId(o.id);
@@ -54,7 +76,7 @@ export function MyOffersPanel() {
         years: Number(editYears),
       });
       setEditingId(null);
-      await fetchMine();
+      await fetchMine(code);
     } catch (err) {
       if (err instanceof ApiError && err.status === 400) {
         setError(err.message.toUpperCase());
@@ -71,7 +93,7 @@ export function MyOffersPanel() {
     setBusyId(o.id);
     try {
       await publicApi.withdrawMyOffer(o.id, code.trim());
-      await fetchMine();
+      await fetchMine(code);
     } catch (err) {
       setError(err instanceof ApiError ? err.message.toUpperCase() : "WITHDRAW FAILED");
     } finally {
@@ -81,7 +103,7 @@ export function MyOffersPanel() {
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    void fetchMine();
+    void fetchMine(code);
   }
 
   return (
@@ -90,7 +112,8 @@ export function MyOffersPanel() {
         <div className="eyebrow opacity-60">MY OFFERS</div>
         <div className="font-mono text-[11px] opacity-70 mt-1">
           Enter the private key you used when submitting to see, edit, or withdraw
-          your pending offers. Case-insensitive.
+          your pending offers, and to unlock your cap projection below.
+          Case-insensitive. No other GM can see your offers.
         </div>
       </div>
 
@@ -105,7 +128,7 @@ export function MyOffersPanel() {
           <input
             type="text"
             value={code}
-            onChange={(e) => setCode(e.target.value)}
+            onChange={(e) => onCodeChange(e.target.value)}
             placeholder="the same key you used when submitting"
             className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm focus:border-[var(--leather)] transition-colors"
           />
@@ -164,8 +187,11 @@ export function MyOffersPanel() {
                     <td className="px-3 py-1.5 font-bold">
                       {o.teamAbbrev}
                       {o.isMle && (
-                        <span className="ml-1.5 font-mono text-[9px] tracking-widest text-[var(--mustard)] border border-[var(--mustard)] px-1 py-[1px]">
-                          MLE
+                        <span
+                          className="ml-1.5 font-mono text-[9px] tracking-widest text-[var(--mustard)] border border-[var(--mustard)] px-1 py-[1px]"
+                          title="Your team's one Mid-Level Exception is committed to this offer"
+                        >
+                          MLE{o.mleTier ? ` T${o.mleTier}` : ""}
                         </span>
                       )}
                       {o.isDoubleDip && (

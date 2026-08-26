@@ -5,6 +5,8 @@ import { OfferValidationError } from "../services/offer.service.js";
 
 const idParam = z.coerce.number().int().positive();
 
+const mleTierSchema = z.union([z.literal(1), z.literal(2)]).nullish();
+
 const createSchema = z.object({
   teamAbbrev: z.string().min(1).max(8),
   gm: z.string().min(1).max(64),
@@ -12,6 +14,7 @@ const createSchema = z.object({
   amount: z.coerce.number().positive(),
   years: z.coerce.number().int().positive(),
   isMLE: z.boolean().optional(),
+  mleTier: mleTierSchema,
   isDoubleDip: z.boolean().optional(),
 });
 
@@ -20,6 +23,9 @@ const previewSchema = z.object({
   amount: z.coerce.number().positive(),
   years: z.coerce.number().int().positive(),
   isMLE: z.boolean().optional(),
+  mleTier: mleTierSchema,
+  // Optional: unlocks the team's own pending-offer figures in the projection.
+  codeWord: z.string().max(64).optional(),
 });
 
 export async function preview(
@@ -121,8 +127,11 @@ export async function lookupByCode(
     return;
   }
   try {
-    const rows = await offerService.listOffersByCode(body.data.codeWord);
-    res.json({ offers: rows });
+    const [rows, pendingOffersByTeam] = await Promise.all([
+      offerService.listOffersByCode(body.data.codeWord),
+      offerService.pendingSummaryForCode(body.data.codeWord),
+    ]);
+    res.json({ offers: rows, pendingOffersByTeam });
   } catch (err) {
     next(err);
   }
@@ -133,6 +142,7 @@ const editSchema = z.object({
   amount: z.coerce.number().positive().optional(),
   years: z.coerce.number().int().positive().optional(),
   isMLE: z.boolean().optional(),
+  mleTier: mleTierSchema,
   isDoubleDip: z.boolean().optional(),
 });
 
@@ -152,6 +162,7 @@ export async function editByCode(
       amount: body.data.amount,
       years: body.data.years,
       isMLE: body.data.isMLE,
+      mleTier: body.data.mleTier ?? undefined,
       isDoubleDip: body.data.isDoubleDip,
     });
     if (!result) {

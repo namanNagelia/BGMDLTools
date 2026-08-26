@@ -16,7 +16,10 @@ interface Props {
   ownFAs: FreeAgent[];
   onRenounce: (faId: number, renounced: boolean) => Promise<void>;
   view?: "roster" | "fa";
+  /** Only ever this team's own book — unlocked by the GM's private key. */
   pendingOffers?: PendingOfferSummary[];
+  /** Has a private key been entered that owns offers for this team? */
+  pendingUnlocked?: boolean;
 }
 
 const TIER_LABEL: Record<number, string> = {
@@ -50,6 +53,7 @@ export function TeamCard({
   onRenounce,
   view = "fa",
   pendingOffers = [],
+  pendingUnlocked = false,
 }: Props) {
   const market = ranks.market[abbrev];
   const legacy = ranks.legacy[abbrev];
@@ -104,19 +108,11 @@ export function TeamCard({
   const overHardAfter = hardRoomAfter < 0;
   const hasPending = pendingOffers.length > 0;
 
-  // MLE tier
-  let mleTier: 1 | 2 | null = null;
-  let mleAmt = 0;
-  let mleYrs = 0;
-  if (committed >= MLE1_FLOOR && committed <= MLE1_CEIL) {
-    mleTier = 1;
-    mleAmt = 7.5;
-    mleYrs = 4;
-  } else if (committed > MLE1_CEIL) {
-    mleTier = 2;
-    mleAmt = 4.5;
-    mleYrs = 3;
-  }
+  // Which MLE tier the cap position qualifies for. Both tiers are always
+  // offerable — this is only which one goes through unflagged.
+  const eligibleMleTier: 1 | 2 | null =
+    committed < MLE1_FLOOR ? null : committed <= MLE1_CEIL ? 1 : 2;
+  const mleUsed = pendingOffers.some((o) => o.isMle);
 
   const roster = team?.roster ?? [];
 
@@ -202,7 +198,14 @@ export function TeamCard({
       </div>
 
       {/* AFTER SIGNINGS ----------------------------------------------- */}
-      {hasPending && (
+      {!pendingUnlocked && (
+        <div className="border border-dashed border-[color:var(--rule-soft)] p-3 mb-3 font-mono text-[10px] tracking-widest opacity-60">
+          ENTER YOUR PRIVATE KEY UNDER
+          <span className="text-[var(--leather)]"> MY OFFERS</span> TO SEE YOUR
+          PENDING OFFERS HERE · NO ONE ELSE CAN SEE THEM
+        </div>
+      )}
+      {pendingUnlocked && hasPending && (
         <div className="border rule p-3 mb-3 bg-[color:var(--ink)]">
           <div className="flex items-baseline justify-between mb-2 flex-wrap gap-2">
             <div className="eyebrow opacity-70">
@@ -403,11 +406,20 @@ export function TeamCard({
         <span>
           <span className="opacity-50">MIN ·</span> $1M / 1+yr (always available)
         </span>
-        {mleTier && (
-          <span className="text-[var(--mustard)]">
-            MLE T{mleTier} · up to ${mleAmt}M / {mleYrs}yr
-          </span>
-        )}
+        <span
+          className={
+            pendingUnlocked && mleUsed
+              ? "text-[var(--leather)]"
+              : "text-[var(--mustard)]"
+          }
+          title="You can offer either tier. If your cap doesn't qualify for it, the offer is flagged for the mod, not blocked — a trade can change your cap. One MLE per team."
+        >
+          MLE {pendingUnlocked ? (mleUsed ? "USED" : "AVAILABLE") : ""} · T1
+          $7.5M/4yr · T2 $4.5M/3yr
+          {eligibleMleTier
+            ? ` · your cap fits T${eligibleMleTier}`
+            : " · your cap fits neither (under $92.5M) — offers get flagged, not blocked"}
+        </span>
         {!overSoft && (
           <span className="text-[var(--leather)]">
             CAP SPACE · {fmt(softRoom)} under soft

@@ -133,6 +133,11 @@ export const offers = pgTable("offers", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   // Mid-Level Exception flag. Backfills to false on existing rows via default.
   isMle: boolean("is_mle").default(false).notNull(),
+  // Which MLE tier the GM declared (1 or 2). Null on non-MLE offers and on
+  // pre-tier rows — those fall back to whatever tier the team's cap qualifies
+  // for. A team may declare either tier regardless of eligibility; a mismatch
+  // is a warning, not a block, because trades can move the cap number.
+  mleTier: integer("mle_tier"),
   // Rule 6 RFA exception: the GM declares this offer is riding on money
   // already tied up in their offers to restricted free agents. Declarative
   // only — the cap checks ignore it; the mod reads it when resolving signings.
