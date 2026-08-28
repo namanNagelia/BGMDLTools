@@ -54,7 +54,7 @@ const parseStatus = (s: unknown): FaStatus => {
 
 interface PlayerIndexEntry {
   ratings: Record<string, unknown> | null;
-  stats: Array<{ season: number; tid: number }>;
+  stats: Array<{ season: number; tid: number; yearsWithTeam: number | null }>;
   bornYear: number | null;
 }
 
@@ -99,18 +99,26 @@ function buildPlayerIndex(
       ratings = pick ?? null;
     }
 
-    const seenKeys = new Set<string>();
-    const stats: Array<{ season: number; tid: number }> = [];
+    const byKey = new Map<string, PlayerIndexEntry["stats"][number]>();
     if (Array.isArray(player.stats)) {
-      for (const s of player.stats as Array<{ season?: number; tid?: number }>) {
+      for (const s of player.stats as Array<{
+        season?: number;
+        tid?: number;
+        yearsWithTeam?: number;
+      }>) {
         if (typeof s?.season !== "number" || typeof s?.tid !== "number") continue;
+        const ywt = typeof s.yearsWithTeam === "number" ? s.yearsWithTeam : null;
         const k = `${s.season}|${s.tid}`;
-        if (seenKeys.has(k)) continue;
-        seenKeys.add(k);
-        stats.push({ season: s.season, tid: s.tid });
+        const prev = byKey.get(k);
+        if (!prev) {
+          byKey.set(k, { season: s.season, tid: s.tid, yearsWithTeam: ywt });
+        } else if (ywt != null && (prev.yearsWithTeam == null || ywt > prev.yearsWithTeam)) {
+          // Regular-season and playoff rows both carry yearsWithTeam; keep the highest.
+          prev.yearsWithTeam = ywt;
+        }
       }
-      stats.sort((a, b) => a.season - b.season);
     }
+    const stats = [...byKey.values()].sort((a, b) => a.season - b.season);
 
     const bornYear = typeof player.born?.year === "number" ? player.born.year : null;
     map.set(normName(fullName), { ratings, stats, bornYear });
@@ -118,9 +126,30 @@ function buildPlayerIndex(
   return map;
 }
 
-/** Consecutive seasons up to and including priorSeason where any stat row was
- * on `tid`. Partial (mid-season-trade) years count — bucket rows by season so
- * within-season row ordering doesn't cause a premature break. */
+/** BBGM stamps `yearsWithTeam` on every stat row — the authoritative tenure
+ * count, reset to 1 whenever the player joins a team. Take it from the most
+ * recent season the player logged on `tid`. Returns 0 when the export predates
+ * the field or the player never suited up for that team. */
+function yearsWithTeamFromStats(
+  stats: PlayerIndexEntry["stats"],
+  tid: number,
+): number {
+  let bestSeason = -Infinity;
+  let years = 0;
+  for (const row of stats) {
+    if (row.tid !== tid || row.yearsWithTeam == null) continue;
+    if (row.season > bestSeason) {
+      bestSeason = row.season;
+      years = row.yearsWithTeam;
+    }
+  }
+  return years > 0 ? years : 0;
+}
+
+/** Fallback for exports without `yearsWithTeam`: consecutive seasons up to and
+ * including priorSeason where any stat row was on `tid`. Partial
+ * (mid-season-trade) years count — bucket rows by season so within-season row
+ * ordering doesn't cause a premature break. */
 function consecutiveYearsOnTeam(
   stats: Array<{ season: number; tid: number }>,
   tid: number,
@@ -328,11 +357,9 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
     const prevTid = prevAbbrev ? abbrevToTid.get(prevAbbrev) : undefined;
     let yearsOnPreviousTeam = 1;
     if (idxEntry && prevTid != null) {
-      const years = consecutiveYearsOnTeam(
-        idxEntry.stats,
-        prevTid,
-        season.seasonNumber - 1,
-      );
+      const years =
+        yearsWithTeamFromStats(idxEntry.stats, prevTid) ||
+        consecutiveYearsOnTeam(idxEntry.stats, prevTid, season.seasonNumber - 1);
       if (years > 0) {
         yearsOnPreviousTeam = years;
         loyaltyYearsAttached++;
