@@ -4,7 +4,10 @@ import { freeAgents, offers, seasons, teams } from "../db/schema.js";
 import { LeagueFetchError } from "./league.service.js";
 
 export const SOFT_CAP = 100; // $M
-export const HARD_CAP = 130; // $M
+// Re-exported for the existing offer callers; defined in cap.constants so the
+// G-League console and the FA console read the same number.
+export { HARD_CAP } from "./cap.constants.js";
+import { HARD_CAP } from "./cap.constants.js";
 export const MLE1_FLOOR = 92.5;
 export const MLE1_CEIL = 107.5;
 export const MLE1_AMT = 7.5;

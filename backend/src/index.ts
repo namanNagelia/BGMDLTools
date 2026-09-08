@@ -6,6 +6,7 @@ import { errorHandler } from "./middleware/errorHandler.js";
 import modRoutes from "./routes/mod.route.js";
 import seasonRoutes from "./routes/season.route.js";
 import publicRoutes from "./routes/public.route.js";
+import gleagueRoutes from "./routes/gleague.route.js";
 
 const app = express();
 
@@ -25,6 +26,7 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/mod", modRoutes);
 app.use("/api/mod/seasons", seasonRoutes);
+app.use("/api/mod/gleague", gleagueRoutes);
 app.use("/api", publicRoutes);
 
 app.use(errorHandler);
