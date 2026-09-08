@@ -18,6 +18,8 @@ export const seasons = pgTable("seasons", {
   sheetsLink: text("sheets_link"),
   isCurrentSzn: boolean("is_current_szn").default(false).notNull(),
   currentWave: integer("current_wave").default(1).notNull(),
+  /** Dropbox link to the paired G-League BBGM export. */
+  glLeagueLink: text("gl_league_link"),
 });
 
 export const statusEnum = pgEnum("fa_status", ["SIGNED", "RFA", "UFA", "TBD"]);
@@ -142,4 +144,83 @@ export const offers = pgTable("offers", {
   // already tied up in their offers to restricted free agents. Declarative
   // only — the cap checks ignore it; the mod reads it when resolving signings.
   isDoubleDip: boolean("is_double_dip").default(false).notNull(),
+});
+
+/* ---------------------------------------------------------------------------
+ * G-League
+ *
+ * A season pairs two BBGM exports: the post-draft main league export (already
+ * on `seasons.leagueLink`) and the G-League export (`seasons.glLeagueLink`).
+ * Players move between the two files; `glMoves` is the authoritative ledger of
+ * every transfer, and it is what makes a call-up able to restore the exact
+ * contract a player carried when he was sent down.
+ * ------------------------------------------------------------------------- */
+
+/** Cached parse of the G-League export, mirroring `teams` for the main league. */
+export const glTeams = pgTable("gl_teams", {
+  id: serial("id").primaryKey(),
+  seasonId: integer("season_id")
+    .references(() => seasons.id, { onDelete: "cascade" })
+    .notNull(),
+  glTid: integer("gl_tid").notNull(),
+  glAbbrev: text("gl_abbrev").notNull(),
+  glRegion: text("gl_region").notNull(),
+  glName: text("gl_name").notNull(),
+  /** Parent club, read from the "(NOP) Birmingham" tag on the GL team's region. */
+  parentAbbrev: text("parent_abbrev").notNull(),
+  parentTid: integer("parent_tid"),
+  totalSalary: decimal("total_salary", { precision: 10, scale: 2 }).notNull(),
+  roster: jsonb("roster"),
+});
+
+export const glDirectionEnum = pgEnum("gl_direction", ["ASSIGN", "CALLUP"]);
+export const glMoveStatusEnum = pgEnum("gl_move_status", [
+  "PROPOSED",
+  "COMMITTED",
+  "DECLINED",
+]);
+export const glContractSourceEnum = pgEnum("gl_contract_source", [
+  "RESTORED",
+  "PAYSCALE",
+  "MINIMUM",
+]);
+
+export const glMoves = pgTable("gl_moves", {
+  id: serial("id").primaryKey(),
+  seasonId: integer("season_id")
+    .references(() => seasons.id, { onDelete: "cascade" })
+    .notNull(),
+  direction: glDirectionEnum("direction").notNull(),
+  status: glMoveStatusEnum("status").default("PROPOSED").notNull(),
+
+  /** name|bornYear — the join between two exports with independent pid spaces. */
+  playerKey: text("player_key").notNull(),
+  playerName: text("player_name").notNull(),
+  bornYear: integer("born_year").notNull(),
+  mainPid: integer("main_pid"),
+  glPid: integer("gl_pid"),
+  mainTeamAbbrev: text("main_team_abbrev").notNull(),
+  glTeamAbbrev: text("gl_team_abbrev").notNull(),
+  ovrAtMove: integer("ovr_at_move").notNull(),
+  ageAtMove: integer("age_at_move").notNull(),
+
+  /** The main-league contract as it stood when he was assigned. */
+  snapContractAmount: decimal("snap_contract_amount", { precision: 10, scale: 2 }),
+  snapContractExp: integer("snap_contract_exp"),
+  /** Whether that snapshot was a rookie deal — drives the RFA-rights rule. */
+  snapWasRookie: boolean("snap_was_rookie").default(false).notNull(),
+
+  /** What he was actually paid on the way back up. */
+  newContractAmount: decimal("new_contract_amount", { precision: 10, scale: 2 }),
+  newContractExp: integer("new_contract_exp"),
+  newContractYears: integer("new_contract_years"),
+  contractSource: glContractSourceEnum("contract_source"),
+
+  /** Rule #5: a rookie deal that lapsed in the G-League costs RFA rights. */
+  rfaRightsLost: boolean("rfa_rights_lost").default(false).notNull(),
+  /** Rule #4: he no longer meets assign criteria, so the call-up is mandatory. */
+  forced: boolean("forced").default(false).notNull(),
+  /** Mod-recorded override of a soft rule (roster shape, service time). */
+  overrideReason: text("override_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
