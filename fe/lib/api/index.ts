@@ -41,6 +41,8 @@ export interface Season {
   seasonNumber: number;
   leagueLink: string;
   sheetsLink: string | null;
+  /** Dropbox link to the paired G-League BBGM export. */
+  glLeagueLink: string | null;
   isCurrentSzn: boolean;
   currentWave: number;
 }
@@ -557,5 +559,136 @@ export const publicApi = {
       method: "POST",
       body: JSON.stringify(input),
     });
+  },
+};
+
+// ---- G-League -------------------------------------------------------------
+
+export type GlViolation = { code: string; severity: "HARD" | "SOFT"; message: string };
+
+export interface GlAffiliatePlayer {
+  pid: number;
+  key: string;
+  name: string;
+  ovr: number;
+  age: number;
+  salaryM: number;
+  contractExp: number;
+  /** Flagged in BBGM = sent down from the main league. Unflagged = original G-Leaguer. */
+  assigned: boolean;
+}
+
+export interface GlCandidate {
+  pid: number;
+  key: string;
+  name: string;
+  ovr: number;
+  age: number;
+  salaryM: number;
+  contractExp: number;
+  onRookieDeal: boolean;
+  violations: GlViolation[];
+  eligible: boolean;
+}
+
+export interface GlBoardTeam {
+  mainTid: number;
+  mainAbbrev: string;
+  mainName: string;
+  glTid: number;
+  glAbbrev: string;
+  glRegion: string;
+  glName: string;
+  players: GlAffiliatePlayer[];
+  assignedCount: number;
+  originalCount: number;
+  payrollM: number;
+  mainPayrollM: number;
+  hardCapRoomM: number;
+  violations: GlViolation[];
+  candidates: GlCandidate[];
+  forced: Array<{ pid: number; name: string; ovr: number; age: number; reasons: string[] }>;
+}
+
+export interface GlLedgerRow {
+  id: number;
+  direction: "ASSIGN" | "CALLUP";
+  playerName: string;
+  mainTeamAbbrev: string;
+  glTeamAbbrev: string;
+  ovrAtMove: number;
+  ageAtMove: number;
+  snapContractAmount: string | null;
+  snapContractExp: number | null;
+  newContractAmount: string | null;
+  newContractExp: number | null;
+  contractSource: "RESTORED" | "PAYSCALE" | "MINIMUM" | null;
+  rfaRightsLost: boolean;
+  forced: boolean;
+  overrideReason: string | null;
+  createdAt: string;
+}
+
+export interface GlBoard {
+  seasonId: number;
+  mainSeason: number;
+  glSeason: number;
+  hardCapM: number;
+  minCallUpOvr: number;
+  unmatchedGl: string[];
+  unmatchedMain: string[];
+  teams: GlBoardTeam[];
+  ledger: GlLedgerRow[];
+}
+
+export type GlProposal =
+  | { direction: "ASSIGN"; pid: number; glAbbrev: string; overrideReason?: string }
+  | { direction: "CALLUP"; glPid: number; mainAbbrev: string; years: number; overrideReason?: string };
+
+export interface GlStagedMove {
+  proposal: GlProposal;
+  playerName: string;
+  ovr: number;
+  age: number;
+  violations: GlViolation[];
+  blocked: boolean;
+  contract?: { amountM: number; exp: number; source: string; rfaRightsLost: boolean };
+}
+
+export const gleague = {
+  async link(seasonId: number, leagueLink: string): Promise<Season> {
+    const res = await request<{ season: Season }>(`/api/mod/gleague/${seasonId}/link`, {
+      method: "POST",
+      body: JSON.stringify({ leagueLink }),
+    });
+    return res.season;
+  },
+
+  async board(seasonId: number): Promise<GlBoard> {
+    return request<GlBoard>(`/api/mod/gleague/${seasonId}/board`);
+  },
+
+  async validate(
+    seasonId: number,
+    moves: GlProposal[],
+  ): Promise<{ staged: GlStagedMove[]; blocked: boolean }> {
+    return request(`/api/mod/gleague/${seasonId}/validate`, {
+      method: "POST",
+      body: JSON.stringify({ moves }),
+    });
+  },
+
+  async commit(
+    seasonId: number,
+    moves: GlProposal[],
+  ): Promise<{ staged: GlStagedMove[]; committed: GlLedgerRow[]; errors: string[] }> {
+    return request(`/api/mod/gleague/${seasonId}/commit`, {
+      method: "POST",
+      body: JSON.stringify({ moves }),
+    });
+  },
+
+  exportUrl(seasonId: number, side: "main" | "gleague"): string {
+    return `${BASE}/api/mod/gleague/${seasonId}/export/${side}`;
   },
 };

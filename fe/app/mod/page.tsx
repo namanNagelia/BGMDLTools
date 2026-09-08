@@ -6,6 +6,7 @@ import { mod } from "@/lib/api";
 import { LoginCard } from "@/components/mod/LoginCard";
 import { SeasonManager } from "@/components/mod/SeasonManager";
 import { OffersInbox } from "@/components/mod/OffersInbox";
+import { GLeagueSection } from "@/components/mod/GLeaguePanel";
 import { HowToPanel } from "@/components/HowToPanel";
 
 type AuthState = "checking" | "anon" | "mod";
@@ -167,6 +168,7 @@ export default function ModPage() {
             />
             <SeasonManager />
             <OffersInbox />
+            <GLeagueSection />
           </div>
         )}
       </main>

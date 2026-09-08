@@ -5,11 +5,12 @@ import { LeagueFetchError } from "../services/league.service.js";
 import {
   buildBoard,
   commitProposals,
+  getSeasonRow,
   loadPair,
   validateProposals,
   type Proposal,
 } from "../services/gleague-board.service.js";
-import { setGlLeagueLink } from "../services/gleague-season.service.js";
+import { listMoves, setGlLeagueLink } from "../services/gleague-season.service.js";
 import { upsertSeasonFromLink } from "../services/season.service.js";
 
 const seasonIdOf = (req: Request): number => {
@@ -90,7 +91,23 @@ export async function downloadExport(req: Request, res: Response, next: NextFunc
   try {
     const seasonId = seasonIdOf(req);
 
+    // Every header must be set before the response is committed — setHeader
+    // after flushHeaders throws, and by then the status is already on the wire.
+    // The season row is a single cheap query, so the filename is known up front.
+    const [season, ledger] = await Promise.all([
+      getSeasonRow(seasonId),
+      listMoves(seasonId),
+    ]);
+    if (!season) throw new LeagueFetchError("Season not found", 404);
+
+    const name =
+      side === "gleague"
+        ? `BGMDL_GL_${season.seasonNumber}_post_gleague.json.gz`
+        : `BGMDL_${season.seasonNumber}_post_gleague.json.gz`;
+
     res.setHeader("Content-Type", "application/gzip");
+    res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
+    res.setHeader("X-Moves-Applied", String(ledger.length));
     res.flushHeaders();
 
     const gz = createGzip();
@@ -98,23 +115,19 @@ export async function downloadExport(req: Request, res: Response, next: NextFunc
     const heartbeat = setInterval(() => gz.flush(zlibConstants.Z_SYNC_FLUSH), 15_000);
 
     try {
-      const { main, gl, ledger } = await loadPair(seasonId);
-      const file = side === "gleague" ? gl : main;
-      const season = (file.gameAttributes.season as number) ?? "unknown";
-      const name =
-        side === "gleague"
-          ? `BGMDL_GL_${season}_post_gleague.json.gz`
-          : `BGMDL_${season}_post_gleague.json.gz`;
-
-      res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
-      res.setHeader("X-Moves-Applied", String(ledger.length));
-
-      gz.end(JSON.stringify(file));
+      const { main, gl } = await loadPair(seasonId);
+      gz.end(JSON.stringify(side === "gleague" ? gl : main));
       await new Promise<void>((resolve, reject) => {
         res.on("finish", resolve);
         res.on("close", resolve);
         gz.on("error", reject);
       });
+    } catch (err) {
+      // Headers are already out, so the only honest signal left is an abrupt
+      // close — a truncated gzip fails loudly rather than looking complete.
+      console.error(`[gl-export] season ${seasonId} ${side} failed:`, err);
+      gz.destroy();
+      res.destroy();
     } finally {
       clearInterval(heartbeat);
     }

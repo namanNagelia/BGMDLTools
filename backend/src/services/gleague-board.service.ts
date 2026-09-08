@@ -61,9 +61,25 @@ export type LoadedPair = {
 export type LeagueSource = (link: string) => Promise<unknown>;
 export type LoadOpts = { fetchJson?: LeagueSource };
 
+/**
+ * Process-wide override for the export source, for tests that drive the HTTP
+ * layer (where there is no call site to thread an option through). Null in
+ * normal operation, which leaves the real fetcher in place.
+ */
+let testSource: LeagueSource | null = null;
+export function setLeagueSourceForTesting(source: LeagueSource | null): void {
+  testSource = source;
+}
+
+/** The season row alone — cheap, and enough to name a download. */
+export async function getSeasonRow(seasonId: number) {
+  const [row] = await db.select().from(seasons).where(eq(seasons.id, seasonId)).limit(1);
+  return row ?? null;
+}
+
 /** Fetch both exports and replay the committed ledger onto them. */
 export async function loadPair(seasonId: number, opts: LoadOpts = {}): Promise<LoadedPair> {
-  const fetchJson = opts.fetchJson ?? fetchLeagueJson;
+  const fetchJson = opts.fetchJson ?? testSource ?? fetchLeagueJson;
   const [season] = await db.select().from(seasons).where(eq(seasons.id, seasonId)).limit(1);
   if (!season) throw new LeagueFetchError("Season not found", 404);
   if (!season.glLeagueLink) {

@@ -1,6 +1,13 @@
 import { gunzipSync } from "node:zlib";
 
-const MAX_FETCH_BYTES = 100 * 1024 * 1024;
+/**
+ * Ceiling on a league download. BGMDL's own files run large — the 2187 main
+ * export is ~190MB as plain JSON (~43MB gzipped) and the 2188 G-League export
+ * is ~107MB plain — and Dropbox serves whatever was uploaded, so an
+ * uncompressed export is routine. Sized to clear those with headroom while
+ * still stopping a runaway download.
+ */
+export const MAX_FETCH_BYTES = 512 * 1024 * 1024;
 
 export class LeagueFetchError extends Error {
   constructor(
