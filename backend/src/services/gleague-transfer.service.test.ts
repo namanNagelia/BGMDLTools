@@ -19,6 +19,7 @@ const mainPid = (pid: number) => main.players.find((p) => p.pid === pid)!;
 const glNamed = (name: string) =>
   gl.players.find((p) => `${p.firstName} ${p.lastName}` === name && p.tid >= 0)!;
 const tidOf = (l: BbgmLeague, abbrev: string) => l.teams.find((t) => t.abbrev === abbrev)!.tid;
+const nameOf = (p: { firstName: string; lastName: string }) => `${p.firstName} ${p.lastName}`;
 
 /** Chevy Smith — BOS, 52 OVR, 24yo, $1M through 2191. Cleanly assignable. */
 const CHEVY = 17335;
@@ -99,8 +100,10 @@ describe("applyMoves — assignment", () => {
 });
 
 describe("applyMoves — call-up", () => {
+  // Ty Christiansen exists only in the G-League file — a true original with no
+  // main-league record, so calling him up has to create one.
   test("moves an original G-Leaguer onto the main roster with a new pid", () => {
-    const p = glNamed("Danny Owens");
+    const p = glNamed("Ty Christiansen");
     const maxMainPid = Math.max(...main.players.map((x) => x.pid));
 
     const res = applyMoves(main, gl, [
@@ -116,8 +119,30 @@ describe("applyMoves — call-up", () => {
 
     const added = main.players.find((x) => x.pid > maxMainPid)!;
     expect(added.tid).toBe(tidOf(main, "NOP"));
-    expect(`${added.firstName} ${added.lastName}`).toBe("Danny Owens");
+    expect(nameOf(added)).toBe("Ty Christiansen");
     expect(res.results[0].mainPid).toBe(added.pid);
+  });
+
+  // Danny Owens already has a main-league record. Calling him up must reuse it
+  // rather than adding a second one under a fresh pid.
+  test("reuses an existing main-league record instead of creating a second", () => {
+    const p = glNamed("Danny Owens");
+    const before = main.players.filter((x) => nameOf(x) === "Danny Owens").length;
+
+    applyMoves(main, gl, [
+      {
+        direction: "CALLUP",
+        glPid: p.pid,
+        mainTid: tidOf(main, "NOP"),
+        years: 3,
+        snapshot: null,
+        wasRookieContract: false,
+      },
+    ]);
+
+    const after = main.players.filter((x) => nameOf(x) === "Danny Owens");
+    expect(after).toHaveLength(before);
+    expect(after.filter((x) => x.tid >= 0)).toHaveLength(1);
   });
 
   test("parks the called-up player's G-League record instead of deleting it", () => {
@@ -158,7 +183,7 @@ describe("applyMoves — call-up", () => {
   });
 
   test("clears the assigned flag when a player reaches the main league", () => {
-    const p = glNamed("Danny Owens");
+    const p = glNamed("Ty Christiansen");
     applyMoves(main, gl, [
       {
         direction: "CALLUP",
@@ -169,7 +194,7 @@ describe("applyMoves — call-up", () => {
         wasRookieContract: false,
       },
     ]);
-    const added = main.players.find((x) => `${x.firstName} ${x.lastName}` === "Danny Owens")!;
+    const added = main.players.find((x) => nameOf(x) === "Ty Christiansen")!;
     expect(added.watch).toBeUndefined();
   });
 });
@@ -330,5 +355,72 @@ describe("applyMoves — release", () => {
     const p = glNamed("Danny Owens");
     const res = applyMoves(main, gl, [{ direction: "RELEASE", glPid: p.pid }]);
     expect(res.results[0]).toMatchObject({ direction: "RELEASE", playerName: "Danny Owens" });
+  });
+});
+
+/**
+ * A move must never duplicate a player. Two call-ups for the same man — a GM
+ * submitting twice, or a mod approving a stale request — has to converge on one
+ * record, not two. This corrupted a real 2189 export: Lyndell Priester ended up
+ * on New Orleans twice, at $13M and $7M.
+ */
+describe("applyMoves — never duplicates a player", () => {
+  const callUp = (glPid: number, years = 2) => ({
+    direction: "CALLUP" as const,
+    glPid,
+    mainTid: tidOf(main, "BOS"),
+    years,
+    snapshot: null,
+    wasRookieContract: false,
+  });
+
+  test("calling the same player up twice leaves one active main record", () => {
+    const assign = applyMoves(main, gl, [
+      { direction: "ASSIGN", pid: CHEVY, glTid: tidOf(gl, "BOS") },
+    ]);
+    const glPid = assign.results[0].glPid!;
+
+    applyMoves(main, gl, [callUp(glPid)]);
+    const after1 = main.players.filter((p) => p.pid === CHEVY || nameOf(p) === "Chevy Smith");
+    applyMoves(main, gl, [callUp(glPid)]);
+    const after2 = main.players.filter((p) => nameOf(p) === "Chevy Smith");
+
+    expect(after1.filter((p) => p.tid >= 0)).toHaveLength(1);
+    expect(after2.filter((p) => p.tid >= 0)).toHaveLength(1);
+    expect(after2).toHaveLength(1);
+  });
+
+  test("the second call-up is reported as an error, not silently applied", () => {
+    const assign = applyMoves(main, gl, [
+      { direction: "ASSIGN", pid: CHEVY, glTid: tidOf(gl, "BOS") },
+    ]);
+    const glPid = assign.results[0].glPid!;
+    applyMoves(main, gl, [callUp(glPid)]);
+
+    const second = applyMoves(main, gl, [callUp(glPid)]);
+    expect(second.results[0].error).toMatch(/not on an affiliate/i);
+  });
+
+  test("calling up someone who is not on an affiliate roster is refused", () => {
+    const p = glNamed("Danny Owens");
+    p.tid = BBGM_TID.FREE_AGENT; // already released
+    const res = applyMoves(main, gl, [callUp(p.pid)]);
+    expect(res.results[0].error).toMatch(/not on an affiliate/i);
+  });
+
+  test("releasing an already-released player is refused", () => {
+    const p = glNamed("Danny Owens");
+    applyMoves(main, gl, [{ direction: "RELEASE", glPid: p.pid }]);
+    const again = applyMoves(main, gl, [{ direction: "RELEASE", glPid: p.pid }]);
+    expect(again.results[0].error).toMatch(/not on an affiliate/i);
+  });
+
+  test("assigning the same player twice is refused the second time", () => {
+    applyMoves(main, gl, [{ direction: "ASSIGN", pid: CHEVY, glTid: tidOf(gl, "BOS") }]);
+    const second = applyMoves(main, gl, [
+      { direction: "ASSIGN", pid: CHEVY, glTid: tidOf(gl, "BOS") },
+    ]);
+    expect(second.results[0].error).toBeDefined();
+    expect(gl.players.filter((p) => nameOf(p) === "Chevy Smith" && p.tid >= 0)).toHaveLength(1);
   });
 });

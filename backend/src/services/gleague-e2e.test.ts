@@ -394,3 +394,75 @@ describe("board cache", () => {
     expect(fetches).toBeGreaterThan(after1);
   });
 });
+
+/**
+ * The duplicate that corrupted a real 2189 export: Lyndell Priester was called
+ * up twice and ended up on New Orleans twice, at $13M and $7M. Blocked at
+ * validation so a GM is told immediately, not at apply time.
+ */
+describe("duplicate moves are rejected up front", () => {
+  test("calling up a player who is not on an affiliate is a hard block", async () => {
+    const board = await buildBoard(seasonId, opts);
+    const bos = board.teams.find((t) => t.glAbbrev === "BOS")!;
+    const p = bos.players[0];
+
+    await commitProposals(
+      seasonId,
+      [{ direction: "CALLUP", glPid: p.pid, mainAbbrev: "BOS", years: 2 }],
+      opts,
+    );
+
+    const { staged, blocked } = await validateProposals(
+      seasonId,
+      [{ direction: "CALLUP", glPid: p.pid, mainAbbrev: "BOS", years: 2 }],
+      opts,
+    );
+    expect(blocked).toBe(true);
+    expect(staged[0].violations.map((v) => v.code)).toContain("NOT_ON_AFFILIATE");
+  });
+
+  test("a second commit cannot duplicate him onto the main roster", async () => {
+    const board = await buildBoard(seasonId, opts);
+    const bos = board.teams.find((t) => t.glAbbrev === "BOS")!;
+    const p = bos.players[0];
+    const move = { direction: "CALLUP" as const, glPid: p.pid, mainAbbrev: "BOS", years: 2 };
+
+    await commitProposals(seasonId, [move], opts);
+    await expect(commitProposals(seasonId, [move], opts)).rejects.toThrow(/hard rule/i);
+
+    const { main } = await loadPair(seasonId, opts);
+    const active = main.players.filter(
+      (x) => `${x.firstName} ${x.lastName}` === p.name && x.tid >= 0,
+    );
+    expect(active).toHaveLength(1);
+  });
+
+  test("assigning a player who is already in the G-League is a hard block", async () => {
+    await commitProposals(seasonId, [{ direction: "ASSIGN", pid: CHEVY, glAbbrev: "BOS" }], opts);
+    const { staged, blocked } = await validateProposals(
+      seasonId,
+      [{ direction: "ASSIGN", pid: CHEVY, glAbbrev: "BOS" }],
+      opts,
+    );
+    expect(blocked).toBe(true);
+    expect(staged[0].violations.map((v) => v.code)).toContain("ALREADY_ASSIGNED");
+  });
+
+  test("releasing a player who is already gone is a hard block", async () => {
+    const board = await buildBoard(seasonId, opts);
+    const bos = board.teams.find((t) => t.glAbbrev === "BOS")!;
+    const p = bos.players[0];
+
+    await commitProposals(
+      seasonId,
+      [{ direction: "RELEASE", glPid: p.pid, mainAbbrev: "BOS" }],
+      opts,
+    );
+    const { blocked } = await validateProposals(
+      seasonId,
+      [{ direction: "RELEASE", glPid: p.pid, mainAbbrev: "BOS" }],
+      opts,
+    );
+    expect(blocked).toBe(true);
+  });
+});

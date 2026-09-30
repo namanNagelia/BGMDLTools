@@ -314,12 +314,21 @@ export async function validateProposals(
         staged.push(notFound(proposal, `pid ${proposal.pid}`, "Player not in the main export"));
         continue;
       }
+      const violations = checkAssignEligibility(p, { ...ctx, topDraftClassPids: topPids });
+      const key = playerKey(p);
+      if (gl.players.some((x) => x.tid >= 0 && playerKey(x) === key)) {
+        violations.push({
+          code: "ALREADY_ASSIGNED",
+          severity: "HARD",
+          message: `${playerName(p)} is already on a G-League roster`,
+        });
+      }
       staged.push({
         proposal,
         playerName: playerName(p),
         ovr: playerOvr(p, ctx.season),
         age: playerAge(p, ctx.season),
-        violations: checkAssignEligibility(p, { ...ctx, topDraftClassPids: topPids }),
+        violations,
         blocked: false,
       });
       continue;
@@ -333,6 +342,19 @@ export async function validateProposals(
     const ovr = playerOvr(p, glSeason);
     const snap = await latestAssignSnapshot(seasonId, playerKey(p));
 
+    // Already called up, released, or never rostered. Letting this through
+    // would apply a move to a player who has already left the affiliate.
+    const offAffiliate: Violation[] =
+      p.tid < 0
+        ? [
+            {
+              code: "NOT_ON_AFFILIATE",
+              severity: "HARD",
+              message: `${playerName(p)} is not on an affiliate roster`,
+            },
+          ]
+        : [];
+
     if (proposal.direction === "RELEASE") {
       staged.push({
         proposal,
@@ -341,11 +363,14 @@ export async function validateProposals(
         age: playerAge(p, glSeason),
         wasAssigned: p.watch === 1,
         // Roster size is projected below; this call only covers the service rule.
-        violations: checkRelease({
-          assigned: p.watch === 1,
-          assignedThisSeason: snap != null,
-          rosterSizeAfter: GL_MIN_ROSTER,
-        }),
+        violations: [
+          ...offAffiliate,
+          ...checkRelease({
+            assigned: p.watch === 1,
+            assignedThisSeason: snap != null,
+            rosterSizeAfter: GL_MIN_ROSTER,
+          }),
+        ],
         blocked: false,
       });
       continue;
@@ -365,14 +390,17 @@ export async function validateProposals(
       playerName: playerName(p),
       ovr,
       age: playerAge(p, glSeason),
-      violations: checkCallUp({
-        ovr,
-        payrollM: payrolls.get(proposal.mainAbbrev) ?? 0,
-        contractM: contract.amountM,
-        hardCapM: HARD_CAP,
-        // Service time is enforced on release, not on recall.
-        seasonsServed: 1,
-      }),
+      violations: [
+        ...offAffiliate,
+        ...checkCallUp({
+          ovr,
+          payrollM: payrolls.get(proposal.mainAbbrev) ?? 0,
+          contractM: contract.amountM,
+          hardCapM: HARD_CAP,
+          // Service time is enforced on release, not on recall.
+          seasonsServed: 1,
+        }),
+      ],
       blocked: false,
       contract: {
         amountM: contract.amountM,

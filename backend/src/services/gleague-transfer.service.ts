@@ -111,6 +111,20 @@ function applyAssign(main: BbgmLeague, gl: BbgmLeague, move: AssignMove): MoveRe
     };
   }
 
+  const name = playerName(source);
+  const dupKey = `${name.toLowerCase()}|${source.born.year}`;
+  if (
+    gl.players.some(
+      (p) => p.tid >= 0 && `${playerName(p).toLowerCase()}|${p.born.year}` === dupKey,
+    )
+  ) {
+    return {
+      direction: "ASSIGN",
+      playerName: name,
+      error: `${name} is already on a G-League roster`,
+    };
+  }
+
   const season = main.gameAttributes.season as number;
   const glSeason = gl.gameAttributes.season as number;
   const ovr = playerOvr(source, season);
@@ -143,10 +157,20 @@ function applyCallUp(main: BbgmLeague, gl: BbgmLeague, move: CallUpMove): MoveRe
     return { direction: "CALLUP", playerName: `pid ${move.glPid}`, error: `Player pid ${move.glPid} not found in the G-League export` };
   }
 
+  const name = playerName(source);
+  if (source.tid < 0) {
+    // Already called up, released, or never on a roster. Proceeding would
+    // insert a second main-league record for a player who has one already.
+    return {
+      direction: "CALLUP",
+      playerName: name,
+      error: `${name} is not on an affiliate roster`,
+    };
+  }
+
   const mainSeason = main.gameAttributes.season as number;
   const glSeason = gl.gameAttributes.season as number;
   const ovr = move.ovrOverride ?? playerOvr(source, glSeason);
-  const name = playerName(source);
 
   // Rule 8.2 — a *direct* call-up needs 55 OVR. A forced call-up (he aged out
   // or outgrew the salary limit) has no such floor and signs for the minimum.
@@ -172,19 +196,19 @@ function applyCallUp(main: BbgmLeague, gl: BbgmLeague, move: CallUpMove): MoveRe
     return { direction: "CALLUP", playerName: name, error: (err as Error).message };
   }
 
-  // Prefer the record he left behind; only originals need a new one.
+  // Reuse whatever record he already has in the main league — parked from an
+  // earlier assignment, or active if something went sideways. Only a genuine
+  // original G-Leaguer, with no main-league record at all, needs a new one.
   const key = `${name.toLowerCase()}|${source.born.year}`;
-  const parked = main.players.find(
-    (p) =>
-      p.tid === BBGM_TID.INACTIVE &&
-      `${playerName(p).toLowerCase()}|${p.born.year}` === key,
+  const existing = main.players.find(
+    (p) => `${playerName(p).toLowerCase()}|${p.born.year}` === key,
   );
 
-  const target = parked ?? crossLeagueCopy(source, nextPid(main), move.mainTid);
+  const target = existing ?? crossLeagueCopy(source, nextPid(main), move.mainTid);
   target.tid = move.mainTid;
   target.contract = { amount: toBbgmAmount(contract.amountM), exp: contract.exp };
   delete target.watch;
-  if (!parked) main.players.push(target);
+  if (!existing) main.players.push(target);
 
   park(source);
 
@@ -219,6 +243,14 @@ function applyRelease(main: BbgmLeague, gl: BbgmLeague, move: ReleaseMove): Move
   }
 
   const name = playerName(source);
+  if (source.tid < 0) {
+    return {
+      direction: "RELEASE",
+      playerName: name,
+      error: `${name} is not on an affiliate roster`,
+    };
+  }
+
   const wasAssigned = source.watch === 1;
 
   source.tid = BBGM_TID.FREE_AGENT;
