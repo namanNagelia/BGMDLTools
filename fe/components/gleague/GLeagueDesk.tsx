@@ -32,6 +32,45 @@ function Rules({ items }: { items: GlViolation[] }) {
   );
 }
 
+/**
+ * Key for the roster pips. The assigned/original split is the one thing on this
+ * page you cannot infer from the numbers, and it drives the rule-7 limits —
+ * five assigned max, the last two slots reserved for original G-Leaguers.
+ */
+function Legend() {
+  const items = [
+    {
+      className: "bg-[var(--leather)]",
+      label: "ASSIGNED",
+      hint: "sent down from the main league",
+    },
+    {
+      className: "bg-[color:rgba(243,237,225,0.55)]",
+      label: "ORIGINAL G-LEAGUER",
+      hint: "belongs to the affiliate",
+    },
+    {
+      className: "bg-[color:rgba(243,237,225,0.15)]",
+      label: "EMPTY SLOT",
+      hint: "roster spot open",
+    },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+      {items.map((it) => (
+        <span key={it.label} className="flex items-center gap-2" title={it.hint}>
+          <span className={`inline-block w-1.5 h-3 shrink-0 ${it.className}`} />
+          <span className="font-mono text-[10px] tracking-widest opacity-70">{it.label}</span>
+        </span>
+      ))}
+      <span className="flex items-center gap-2" title="your club">
+        <span className="inline-block w-3 h-3 shrink-0 border border-[var(--leather)]" />
+        <span className="font-mono text-[10px] tracking-widest opacity-70">YOUR CLUB</span>
+      </span>
+    </div>
+  );
+}
+
 /** Roster-slot pips: filled orange for assigned, pale for original G-Leaguers. */
 function Pips({ team }: { team: GlBoardTeam }) {
   return (
@@ -178,11 +217,7 @@ export function GLeagueDesk() {
     return (
       <section className="rise">
         <div className="eyebrow opacity-60">STEP 1</div>
-        <h2 className="display text-4xl mt-2">WHICH CLUB DO YOU RUN?</h2>
-        <p className="mt-3 max-w-2xl text-sm opacity-70 leading-relaxed">
-          Pick your franchise. You can browse every affiliate in the league, but you can only
-          send players down and call them up for your own club.
-        </p>
+        <h2 className="display text-4xl mt-2">PICK YOUR TEAM</h2>
         <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-6 gap-2 mt-8">
           {board.teams.map((t) => (
             <button
@@ -273,7 +308,10 @@ export function GLeagueDesk() {
 
       {/* league grid ------------------------------------------------------- */}
       <div>
-        <div className="eyebrow opacity-60 mb-3">EVERY AFFILIATE</div>
+        <div className="flex flex-wrap items-baseline justify-between gap-3 mb-3">
+          <div className="eyebrow opacity-60">EVERY AFFILIATE</div>
+          <Legend />
+        </div>
         <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-6 gap-2">
           {board.teams.map((t) => {
             const own = t.mainAbbrev === myTeam;

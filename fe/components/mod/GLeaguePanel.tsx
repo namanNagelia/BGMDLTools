@@ -34,6 +34,37 @@ function Violations({ items }: { items: GlViolation[] }) {
   );
 }
 
+/**
+ * Key for the roster pips. The assigned/original split drives the rule-7
+ * limits — five assigned max, the last two slots for original G-Leaguers —
+ * and is the one thing here you cannot read off the numbers.
+ */
+function Legend() {
+  const items = [
+    { className: "bg-[var(--leather)]", label: "ASSIGNED", hint: "sent down from the main league" },
+    {
+      className: "bg-[color:rgba(243,237,225,0.55)]",
+      label: "ORIGINAL G-LEAGUER",
+      hint: "belongs to the affiliate",
+    },
+    {
+      className: "bg-[color:rgba(243,237,225,0.15)]",
+      label: "EMPTY SLOT",
+      hint: "roster spot open",
+    },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+      {items.map((it) => (
+        <span key={it.label} className="flex items-center gap-2" title={it.hint}>
+          <span className={`inline-block w-1.5 h-3 shrink-0 ${it.className}`} />
+          <span className="font-mono text-[10px] tracking-widest opacity-70">{it.label}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** One affiliate's tile in the 30-team grid. */
 function TeamTile({
   team,
@@ -369,6 +400,10 @@ export function GLeaguePanel({ season }: { season: Season }) {
       {board && (
         <>
           {/* affiliate grid ------------------------------------------------ */}
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <div className="eyebrow opacity-60">AFFILIATES</div>
+            <Legend />
+          </div>
           <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2">
             {board.teams.map((t) => (
               <TeamTile
