@@ -45,10 +45,16 @@ export type CallUpMove = {
   ovrOverride?: number;
 };
 
-export type GLeagueMove = AssignMove | CallUpMove;
+export type ReleaseMove = {
+  direction: "RELEASE";
+  /** pid in the G-League export. */
+  glPid: number;
+};
+
+export type GLeagueMove = AssignMove | CallUpMove | ReleaseMove;
 
 export type MoveResult = {
-  direction: "ASSIGN" | "CALLUP";
+  direction: "ASSIGN" | "CALLUP" | "RELEASE";
   playerName: string;
   mainPid?: number;
   glPid?: number;
@@ -195,6 +201,48 @@ function applyCallUp(main: BbgmLeague, gl: BbgmLeague, move: CallUpMove): MoveRe
 }
 
 /**
+ * Cut a player loose.
+ *
+ * His G-League record goes to the G-League free agent pool. If he was assigned
+ * from the main league, the record parked there is freed too — releasing only
+ * the G-League side would strand his main-league record at the inactive tid
+ * with no affiliate left to recall him from.
+ */
+function applyRelease(main: BbgmLeague, gl: BbgmLeague, move: ReleaseMove): MoveResult {
+  const source = gl.players.find((p) => p.pid === move.glPid);
+  if (!source) {
+    return {
+      direction: "RELEASE",
+      playerName: `pid ${move.glPid}`,
+      error: `Player pid ${move.glPid} not found in the G-League export`,
+    };
+  }
+
+  const name = playerName(source);
+  const wasAssigned = source.watch === 1;
+
+  source.tid = BBGM_TID.FREE_AGENT;
+  delete source.watch;
+
+  let mainPid: number | undefined;
+  if (wasAssigned) {
+    const key = `${name.toLowerCase()}|${source.born.year}`;
+    const parked = main.players.find(
+      (p) =>
+        p.tid === BBGM_TID.INACTIVE &&
+        `${playerName(p).toLowerCase()}|${p.born.year}` === key,
+    );
+    if (parked) {
+      parked.tid = BBGM_TID.FREE_AGENT;
+      delete parked.watch;
+      mainPid = parked.pid;
+    }
+  }
+
+  return { direction: "RELEASE", playerName: name, glPid: source.pid, mainPid };
+}
+
+/**
  * Apply a batch in order. A bad move is isolated — it is reported and skipped
  * so one typo can't sink an otherwise good preseason batch.
  */
@@ -206,9 +254,13 @@ export function applyMoves(
   const results: MoveResult[] = [];
 
   for (const move of moves) {
-    results.push(
-      move.direction === "ASSIGN" ? applyAssign(main, gl, move) : applyCallUp(main, gl, move),
-    );
+    if (move.direction === "ASSIGN") {
+      results.push(applyAssign(main, gl, move));
+    } else if (move.direction === "CALLUP") {
+      results.push(applyCallUp(main, gl, move));
+    } else {
+      results.push(applyRelease(main, gl, move));
+    }
   }
 
   return {

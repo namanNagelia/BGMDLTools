@@ -274,3 +274,61 @@ describe("applyMoves — batch integrity", () => {
     expect(map.unmatchedGl).toStrictEqual([]);
   });
 });
+
+describe("applyMoves — release", () => {
+  test("an original G-Leaguer goes to the G-League free agent pool", () => {
+    const p = glNamed("Danny Owens");
+    const before = gl.players.length;
+
+    const res = applyMoves(main, gl, [{ direction: "RELEASE", glPid: p.pid }]);
+
+    expect(res.errors).toStrictEqual([]);
+    expect(gl.players).toHaveLength(before);
+    expect(gl.players.find((x) => x.pid === p.pid)!.tid).toBe(BBGM_TID.FREE_AGENT);
+  });
+
+  test("he leaves the affiliate roster", () => {
+    const p = glNamed("Danny Owens");
+    const tid = p.tid;
+    applyMoves(main, gl, [{ direction: "RELEASE", glPid: p.pid }]);
+    expect(gl.players.filter((x) => x.tid === tid).some((x) => x.pid === p.pid)).toBe(false);
+  });
+
+  /**
+   * Releasing a player who was sent down cuts him from the organisation. If
+   * only the G-League record were released, his main-league record would sit
+   * parked at the inactive tid forever with no affiliate to recall him from.
+   */
+  test("releasing an assigned player also frees his parked main-league record", () => {
+    const assign = applyMoves(main, gl, [
+      { direction: "ASSIGN", pid: CHEVY, glTid: tidOf(gl, "BOS") },
+    ]);
+    expect(mainPid(CHEVY).tid).toBe(BBGM_TID.INACTIVE);
+
+    applyMoves(main, gl, [{ direction: "RELEASE", glPid: assign.results[0].glPid! }]);
+
+    expect(mainPid(CHEVY).tid).toBe(BBGM_TID.FREE_AGENT);
+    expect(gl.players.find((x) => x.pid === assign.results[0].glPid)!.tid).toBe(
+      BBGM_TID.FREE_AGENT,
+    );
+  });
+
+  test("clears the assigned flag — he is nobody's farmhand now", () => {
+    const assign = applyMoves(main, gl, [
+      { direction: "ASSIGN", pid: CHEVY, glTid: tidOf(gl, "BOS") },
+    ]);
+    applyMoves(main, gl, [{ direction: "RELEASE", glPid: assign.results[0].glPid! }]);
+    expect(gl.players.find((x) => x.pid === assign.results[0].glPid)!.watch).toBeUndefined();
+  });
+
+  test("reports a release of someone who is not there", () => {
+    const res = applyMoves(main, gl, [{ direction: "RELEASE", glPid: 999999 }]);
+    expect(res.results[0].error).toMatch(/not found/i);
+  });
+
+  test("names the released player in the result", () => {
+    const p = glNamed("Danny Owens");
+    const res = applyMoves(main, gl, [{ direction: "RELEASE", glPid: p.pid }]);
+    expect(res.results[0]).toMatchObject({ direction: "RELEASE", playerName: "Danny Owens" });
+  });
+});

@@ -355,8 +355,16 @@ export function GLeaguePanel({ season }: { season: Season }) {
                 key={r.id}
                 className="flex items-center gap-3 border-b rule border-[color:var(--rule-soft)] py-1.5"
               >
-                <span className="font-mono text-[10px] tracking-widest w-14 shrink-0 opacity-70">
-                  {r.direction === "ASSIGN" ? "DOWN" : `UP ${r.newContractYears ?? ""}Y`}
+                <span
+                  className={`font-mono text-[10px] tracking-widest w-14 shrink-0 ${
+                    r.direction === "RELEASE" ? "text-[var(--leather)]" : "opacity-70"
+                  }`}
+                >
+                  {r.direction === "ASSIGN"
+                    ? "DOWN"
+                    : r.direction === "RELEASE"
+                      ? "CUT"
+                      : `UP ${r.newContractYears ?? ""}Y`}
                 </span>
                 <span className="flex-1 font-mono text-xs truncate">
                   {r.playerName}
@@ -368,6 +376,11 @@ export function GLeaguePanel({ season }: { season: Season }) {
                 <span className="font-mono text-[10px] opacity-60 tabular-nums">
                   {r.ovrAtMove} · {r.ageAtMove}yo
                 </span>
+                {r.newContractAmount && (
+                  <span className="font-mono text-[10px] text-[var(--mustard)] tabular-nums">
+                    ${Number(r.newContractAmount).toFixed(2)}M/{r.newContractExp}
+                  </span>
+                )}
                 <span className="font-mono text-[10px] opacity-50 truncate max-w-[9rem]">
                   {r.submittedByGm ?? "unknown GM"}
                 </span>
@@ -654,8 +667,12 @@ export function GLeaguePanel({ season }: { season: Season }) {
                     key={row.id}
                     className="flex items-center gap-3 border-b rule border-[color:var(--rule-soft)] py-1"
                   >
-                    <span className="font-mono text-[10px] tracking-widest w-12 shrink-0 opacity-70">
-                      {row.direction === "ASSIGN" ? "DOWN" : "UP"}
+                    <span
+                      className={`font-mono text-[10px] tracking-widest w-12 shrink-0 ${
+                        row.direction === "RELEASE" ? "text-[var(--leather)]" : "opacity-70"
+                      }`}
+                    >
+                      {row.direction === "ASSIGN" ? "DOWN" : row.direction === "RELEASE" ? "CUT" : "UP"}
                     </span>
                     <span className="flex-1 font-mono text-xs truncate">{row.playerName}</span>
                     <span className="font-mono text-[10px] opacity-60">

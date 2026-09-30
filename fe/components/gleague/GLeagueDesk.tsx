@@ -8,11 +8,25 @@ import {
   type GlBoardTeam,
   type GlProposal,
   type GlRequestRow,
+  type GlStagedMove,
   type GlViolation,
 } from "@/lib/api";
 
 const money = (m: number) => `$${m.toFixed(2)}M`;
 const CALLUP_YEARS = [2, 3, 4, 5] as const;
+
+/**
+ * Roster-shape rules describe the affiliate, not any one move, so the server
+ * attaches them to every move in the batch — dropping any of them could fix it.
+ * Shown once for the batch rather than repeated on each row.
+ */
+const ROSTER_CODES = new Set([
+  "BELOW_MIN_ROSTER",
+  "ABOVE_MAX_ROSTER",
+  "HOARD_LIMIT",
+  "TOO_MANY_ASSIGNED",
+]);
+const isRosterRule = (v: GlViolation) => ROSTER_CODES.has(v.code);
 
 function Rules({ items }: { items: GlViolation[] }) {
   if (!items.length) return null;
@@ -104,6 +118,8 @@ export function GLeagueDesk() {
   const [viewing, setViewing] = useState<string | null>(null);
 
   const [staged, setStaged] = useState<GlProposal[]>([]);
+  const [preview, setPreview] = useState<GlStagedMove[]>([]);
+  const [showAll, setShowAll] = useState(false);
   const [mine, setMine] = useState<GlRequestRow[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -143,11 +159,70 @@ export function GLeagueDesk() {
     void gleaguePublic.myRequests(myTeam).then(setMine).catch(() => undefined);
   }, [myTeam, note]);
 
+  // Price the batch as it is built, so the GM sees real contract figures
+  // before they send anything.
+  useEffect(() => {
+    if (!staged.length) {
+      setPreview([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await gleaguePublic.preview(staged);
+        if (!cancelled) setPreview(res.staged);
+      } catch {
+        /* the send button surfaces the real failure */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [staged]);
+
   const team = useMemo(
     () => board?.teams.find((t) => t.mainAbbrev === viewing) ?? null,
     [board, viewing],
   );
   const isMine = team?.mainAbbrev === myTeam;
+
+  /** Players on this team already sitting in the mod queue, by side. */
+  const pendingPids = useMemo(() => {
+    const down = new Set<number>();
+    const gl = new Set<number>();
+    for (const r of mine) {
+      if (r.direction === "ASSIGN" && r.mainPid != null) down.add(r.mainPid);
+      else if (r.glPid != null) gl.add(r.glPid);
+    }
+    return { down, gl };
+  }, [mine]);
+
+  const blocked = preview.some((s) => s.blocked);
+
+  /** Roster-shape warnings for the batch, deduped by message. */
+  const rosterRules = useMemo(() => {
+    const seen = new Map<string, GlViolation>();
+    for (const s of preview) {
+      for (const v of s.violations) if (isRosterRule(v)) seen.set(v.message, v);
+    }
+    return [...seen.values()];
+  }, [preview]);
+
+  /**
+   * Staged moves indexed for in-place display, so a GM sees what the rosters
+   * will look like before they send anything to the mods.
+   */
+  const pendingMove = useMemo(() => {
+    const assign = new Map<number, GlStagedMove | undefined>();
+    const callUp = new Map<number, GlStagedMove | undefined>();
+    const release = new Map<number, GlStagedMove | undefined>();
+    staged.forEach((m, i) => {
+      if (m.direction === "ASSIGN") assign.set(m.pid, preview[i]);
+      else if (m.direction === "CALLUP") callUp.set(m.glPid, preview[i]);
+      else release.set(m.glPid, preview[i]);
+    });
+    return { assign, callUp, release };
+  }, [staged, preview]);
 
   function chooseTeam(abbrev: string) {
     setMyTeam(abbrev);
@@ -195,7 +270,13 @@ export function GLeagueDesk() {
   }
 
   const stagedKeys = new Set(
-    staged.map((m) => (m.direction === "ASSIGN" ? `a${m.pid}` : `c${m.glPid}`)),
+    staged.map((m) =>
+      m.direction === "ASSIGN"
+        ? `a${m.pid}`
+        : m.direction === "RELEASE"
+          ? `r${m.glPid}`
+          : `c${m.glPid}`,
+    ),
   );
 
   if (loading) {
@@ -245,23 +326,15 @@ export function GLeagueDesk() {
             </div>
             <h2 className="display text-4xl mt-2">AFFILIATE DESK</h2>
           </div>
-          <div className="flex items-center gap-3">
-            <input
-              value={gm}
-              onChange={(e) => saveGm(e.target.value)}
-              placeholder="YOUR GM NAME"
-              className="bg-transparent border rule px-3 py-1.5 font-mono text-[10px] tracking-widest outline-none focus:border-[var(--leather)] w-44"
-            />
-            <button
-              onClick={() => {
-                setMyTeam(null);
-                setStaged([]);
-              }}
-              className="font-mono text-[10px] tracking-widest opacity-60 hover:opacity-100"
-            >
-              CHANGE TEAM
-            </button>
-          </div>
+          <button
+            onClick={() => {
+              setMyTeam(null);
+              setStaged([]);
+            }}
+            className="font-mono text-[10px] tracking-widest opacity-60 hover:opacity-100"
+          >
+            CHANGE TEAM
+          </button>
         </div>
         <div className="seam mt-4" />
       </div>
@@ -308,43 +381,65 @@ export function GLeagueDesk() {
 
       {/* league grid ------------------------------------------------------- */}
       <div>
-        <div className="flex flex-wrap items-baseline justify-between gap-3 mb-3">
-          <div className="eyebrow opacity-60">EVERY AFFILIATE</div>
-          <Legend />
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <button
+            onClick={() => setShowAll((v) => !v)}
+            className="eyebrow opacity-70 hover:opacity-100 flex items-center gap-2 transition-opacity"
+          >
+            <span className="inline-block w-3 text-[var(--leather)]">{showAll ? "−" : "+"}</span>
+            EVERY AFFILIATE
+            <span className="opacity-50">({board.teams.length})</span>
+          </button>
+          {showAll && <Legend />}
         </div>
-        <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-6 gap-2">
-          {board.teams.map((t) => {
-            const own = t.mainAbbrev === myTeam;
-            const active = t.mainAbbrev === viewing;
-            return (
-              <button
-                key={t.glTid}
-                onClick={() => setViewing(t.mainAbbrev)}
-                className={`border rule p-2.5 text-left transition-colors ${
-                  active
-                    ? "bg-[var(--paper)] text-[var(--ink)]"
-                    : "hover:bg-[color:rgba(243,237,225,0.06)]"
-                } ${own && !active ? "border-[var(--leather)]" : ""}`}
-              >
-                <div className="flex items-baseline justify-between gap-1">
-                  <span className="font-mono text-[11px] tracking-widest">{t.mainAbbrev}</span>
-                  <span
-                    className={`font-mono text-[10px] ${
-                      t.players.length < 5 || t.players.length > 7
-                        ? "text-[var(--mustard)]"
-                        : "opacity-50"
-                    }`}
-                  >
-                    {t.players.length}/7
-                  </span>
-                </div>
-                <div className="mt-1.5">
-                  <Pips team={t} />
-                </div>
-              </button>
-            );
-          })}
-        </div>
+
+        {showAll && (
+          <div className="grid grid-cols-3 sm:grid-cols-5 lg:grid-cols-6 gap-2 mt-3">
+            {board.teams.map((t) => {
+              const own = t.mainAbbrev === myTeam;
+              const active = t.mainAbbrev === viewing;
+              return (
+                <button
+                  key={t.glTid}
+                  onClick={() => setViewing(t.mainAbbrev)}
+                  className={`border rule p-2.5 text-left transition-colors ${
+                    active
+                      ? "bg-[var(--paper)] text-[var(--ink)]"
+                      : "hover:bg-[color:rgba(243,237,225,0.06)]"
+                  } ${own && !active ? "border-[var(--leather)]" : ""}`}
+                >
+                  <div className="flex items-baseline justify-between gap-1">
+                    <span className="font-mono text-[11px] tracking-widest">{t.mainAbbrev}</span>
+                    <span
+                      className={`font-mono text-[10px] ${
+                        t.players.length < 5 || t.players.length > 7
+                          ? "text-[var(--mustard)]"
+                          : "opacity-50"
+                      }`}
+                    >
+                      {t.players.length}/7
+                    </span>
+                  </div>
+                  <div className="mt-1.5">
+                    <Pips team={t} />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {!showAll && viewing !== myTeam && (
+          <div className="mt-2 font-mono text-[10px] tracking-widest opacity-60">
+            VIEWING {viewing} ·{" "}
+            <button
+              onClick={() => setViewing(myTeam)}
+              className="underline decoration-[var(--leather)] underline-offset-2 hover:text-[var(--leather)]"
+            >
+              BACK TO {myTeam}
+            </button>
+          </div>
+        )}
       </div>
 
       {team && (
@@ -366,10 +461,15 @@ export function GLeagueDesk() {
               {team.players.length === 0 && (
                 <div className="font-mono text-xs opacity-50">Empty roster.</div>
               )}
-              {team.players.map((p) => (
+              {team.players.map((p) => {
+                const leavingUp = pendingMove.callUp.has(p.pid);
+                const cut = pendingMove.release.has(p.pid);
+                return (
                 <div
                   key={p.pid}
-                  className="flex items-center gap-3 border-b rule border-[color:var(--rule-soft)] py-1.5"
+                  className={`flex items-center gap-3 border-b rule border-[color:var(--rule-soft)] py-1.5 ${
+                    cut ? "opacity-50" : leavingUp ? "opacity-60" : ""
+                  }`}
                 >
                   <span
                     className={`inline-block w-1.5 h-4 shrink-0 ${
@@ -377,11 +477,50 @@ export function GLeagueDesk() {
                     }`}
                     title={p.assigned ? "Assigned from the main league" : "Original G-Leaguer"}
                   />
-                  <span className="flex-1 font-mono text-xs truncate">{p.name}</span>
+                  <span
+                    className={`flex-1 font-mono text-xs truncate ${
+                      cut ? "line-through decoration-[var(--leather)] decoration-2" : ""
+                    }`}
+                  >
+                    {p.name}
+                  </span>
+                  {cut && (
+                    <span className="font-mono text-[9px] tracking-widest text-[var(--leather)]">
+                      CUT
+                    </span>
+                  )}
+                  {leavingUp && (
+                    <span className="font-mono text-[9px] tracking-widest text-[var(--mustard)]">
+                      ↑ CALLED UP
+                    </span>
+                  )}
                   <span className="font-mono text-[10px] opacity-60 tabular-nums">
                     {p.ovr} · {p.age}yo · {money(p.salaryM)}
                   </span>
-                  {isMine && (
+                  {isMine && pendingPids.gl.has(p.pid) && (
+                    <span
+                      className="font-mono text-[9px] tracking-widest text-[var(--mustard)]"
+                      title="already sitting in the mod queue"
+                    >
+                      PENDING
+                    </span>
+                  )}
+                  {isMine && !pendingPids.gl.has(p.pid) && (
+                    <button
+                      disabled={stagedKeys.has(`r${p.pid}`)}
+                      onClick={() =>
+                        setStaged((cur) => [
+                          ...cur,
+                          { direction: "RELEASE", glPid: p.pid, mainAbbrev: team.mainAbbrev },
+                        ])
+                      }
+                      title="cut him to G-League free agency"
+                      className="border rule px-2 py-0.5 font-mono text-[10px] tracking-widest hover:bg-[var(--leather)] hover:border-[var(--leather)] hover:text-[var(--paper)] transition-colors disabled:opacity-30"
+                    >
+                      {stagedKeys.has(`r${p.pid}`) ? "CUT ✓" : "CUT"}
+                    </button>
+                  )}
+                  {isMine && !pendingPids.gl.has(p.pid) && (
                     <select
                       defaultValue=""
                       disabled={stagedKeys.has(`c${p.pid}`)}
@@ -410,7 +549,32 @@ export function GLeagueDesk() {
                     </select>
                   )}
                 </div>
-              ))}
+                );
+              })}
+
+              {/* players this batch would send down */}
+              {isMine &&
+                [...pendingMove.assign.entries()].map(([pid, pv]) => {
+                  const c = team.candidates.find((x) => x.pid === pid);
+                  if (!c) return null;
+                  return (
+                    <div
+                      key={`in-${pid}`}
+                      className="flex items-center gap-3 border-b border-dashed rule border-[color:var(--rule-soft)] py-1.5"
+                    >
+                      <span className="inline-block w-1.5 h-4 shrink-0 bg-[var(--leather)] opacity-50" />
+                      <span className="flex-1 font-mono text-xs truncate text-[var(--mustard)]">
+                        {pv?.playerName ?? c.name}
+                      </span>
+                      <span className="font-mono text-[9px] tracking-widest text-[var(--mustard)]">
+                        ↓ PENDING
+                      </span>
+                      <span className="font-mono text-[10px] opacity-60 tabular-nums">
+                        {c.ovr} · {c.age}yo
+                      </span>
+                    </div>
+                  );
+                })}
             </div>
           </div>
 
@@ -437,16 +601,57 @@ export function GLeagueDesk() {
             )}
 
             <div className="mt-4 space-y-1 max-h-[28rem] overflow-y-auto">
-              {team.candidates.map((c) => (
+              {/* players this batch would call up, with what they will be paid */}
+              {isMine &&
+                [...pendingMove.callUp.entries()].map(([glPid, pv]) => {
+                  const p = team.players.find((x) => x.pid === glPid);
+                  return (
+                    <div
+                      key={`up-${glPid}`}
+                      className="border-b border-dashed rule border-[color:var(--rule-soft)] py-1.5"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="flex-1 font-mono text-xs truncate text-[var(--mustard)]">
+                          {pv?.playerName ?? p?.name ?? `pid ${glPid}`}
+                        </span>
+                        <span className="font-mono text-[9px] tracking-widest text-[var(--mustard)]">
+                          ↑ PENDING
+                        </span>
+                        <span className="font-mono text-[10px] opacity-60 tabular-nums">
+                          {pv?.ovr ?? p?.ovr} · {pv?.age ?? p?.age}yo
+                        </span>
+                      </div>
+                      {pv?.contract && (
+                        <div className="font-mono text-[10px] mt-0.5 text-[var(--mustard)]">
+                          {money(pv.contract.amountM)} through {pv.contract.exp}
+                          <span className="opacity-60"> · {pv.contract.source}</span>
+                          {pv.contract.rfaRightsLost && (
+                            <span className="text-[var(--leather)]"> · RFA RIGHTS LOST</span>
+                          )}
+                        </div>
+                      )}
+                      {pv && <Rules items={pv.violations.filter((v) => !isRosterRule(v))} />}
+                    </div>
+                  );
+                })}
+
+              {team.candidates.map((c) => {
+                const goingDown = pendingMove.assign.has(c.pid);
+                return (
                 <div
                   key={c.pid}
                   className={`border-b rule border-[color:var(--rule-soft)] py-1.5 ${
-                    c.eligible ? "" : "opacity-45"
+                    goingDown ? "opacity-55" : c.eligible ? "" : "opacity-45"
                   }`}
                 >
                   <div className="flex items-center gap-3">
                     <span className="flex-1 font-mono text-xs truncate">
                       {c.name}
+                      {goingDown && (
+                        <span className="ml-2 font-mono text-[9px] tracking-widest text-[var(--mustard)]">
+                          ↓ SENT DOWN
+                        </span>
+                      )}
                       {c.onRookieDeal && (
                         <span className="ml-2 font-mono text-[9px] tracking-widest text-[var(--mustard)]">
                           ROOKIE
@@ -456,7 +661,15 @@ export function GLeagueDesk() {
                     <span className="font-mono text-[10px] opacity-60 tabular-nums">
                       {c.ovr} · {c.age}yo · {money(c.salaryM)}
                     </span>
-                    {isMine && (
+                    {isMine && pendingPids.down.has(c.pid) && (
+                      <span
+                        className="font-mono text-[9px] tracking-widest text-[var(--mustard)]"
+                        title="already sitting in the mod queue"
+                      >
+                        PENDING
+                      </span>
+                    )}
+                    {isMine && !pendingPids.down.has(c.pid) && (
                       <button
                         disabled={!c.eligible || stagedKeys.has(`a${c.pid}`)}
                         onClick={() =>
@@ -471,9 +684,10 @@ export function GLeagueDesk() {
                       </button>
                     )}
                   </div>
-                  {isMine && <Rules items={c.violations} />}
+                  {isMine && <Rules items={c.violations.filter((v) => !isRosterRule(v))} />}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -484,48 +698,112 @@ export function GLeagueDesk() {
         <div className="border rule border-[var(--leather)] p-4">
           <div className="eyebrow opacity-70">READY TO SEND · {staged.length}</div>
           <div className="mt-3 space-y-1.5">
-            {staged.map((m, i) => (
-              <div
-                key={i}
-                className="flex items-center gap-3 border-b rule border-[color:var(--rule-soft)] pb-1.5"
-              >
-                <span className="font-mono text-[10px] tracking-widest w-14 shrink-0 opacity-70">
-                  {m.direction === "ASSIGN" ? "DOWN" : `UP ${m.years}Y`}
-                </span>
-                <span className="flex-1 font-mono text-xs">
-                  {m.direction === "ASSIGN"
-                    ? (team?.candidates.find((c) => c.pid === m.pid)?.name ?? `pid ${m.pid}`)
-                    : (team?.players.find((p) => p.pid === m.glPid)?.name ?? `pid ${m.glPid}`)}
-                </span>
-                <button
-                  onClick={() => setStaged((cur) => cur.filter((_, idx) => idx !== i))}
-                  className="font-mono text-[10px] tracking-widest opacity-50 hover:opacity-100 hover:text-[var(--leather)]"
+            {staged.map((m, i) => {
+              const p = preview[i];
+              const label =
+                m.direction === "ASSIGN" ? "DOWN" : m.direction === "RELEASE" ? "CUT" : `UP ${m.years}Y`;
+              return (
+                <div
+                  key={i}
+                  className="flex items-start gap-3 border-b rule border-[color:var(--rule-soft)] pb-1.5"
                 >
-                  DROP
-                </button>
-              </div>
-            ))}
+                  <span
+                    className={`font-mono text-[10px] tracking-widest w-16 shrink-0 ${
+                      m.direction === "RELEASE" ? "text-[var(--leather)]" : "opacity-70"
+                    }`}
+                  >
+                    {label}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="font-mono text-xs">
+                      {p?.playerName ??
+                        (m.direction === "ASSIGN" ? `pid ${m.pid}` : `pid ${m.glPid}`)}
+                      {p && (
+                        <span className="opacity-50">
+                          {" "}
+                          · {p.ovr} OVR · {p.age}yo
+                        </span>
+                      )}
+                    </div>
+
+                    {/* what the call-up actually costs */}
+                    {p?.contract && (
+                      <div className="font-mono text-[10px] mt-0.5">
+                        <span className="text-[var(--mustard)]">
+                          {money(p.contract.amountM)} through {p.contract.exp}
+                        </span>
+                        <span className="opacity-50"> · {p.contract.source}</span>
+                        {p.contract.rfaRightsLost && (
+                          <span className="text-[var(--leather)]"> · RFA RIGHTS LOST</span>
+                        )}
+                      </div>
+                    )}
+
+                    {m.direction === "RELEASE" && p && (
+                      <div className="font-mono text-[10px] opacity-60 mt-0.5">
+                        {p.wasAssigned
+                          ? "cuts him from the organisation — leaves your affiliate and your main roster"
+                          : "returns him to G-League free agency"}
+                      </div>
+                    )}
+
+                    {p && <Rules items={p.violations.filter((v) => !isRosterRule(v))} />}
+                  </div>
+                  <button
+                    onClick={() => setStaged((cur) => cur.filter((_, idx) => idx !== i))}
+                    className="font-mono text-[10px] tracking-widest opacity-50 hover:opacity-100 hover:text-[var(--leather)]"
+                  >
+                    DROP
+                  </button>
+                </div>
+              );
+            })}
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <button
-              onClick={() => void handleSubmit()}
-              disabled={submitting || !gm.trim()}
-              className="border rule px-4 py-2 font-mono text-xs tracking-widest hover:bg-[var(--paper)] hover:text-[var(--ink)] transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-inherit"
-            >
-              {submitting ? <span className="spinner" /> : "SEND TO MODS"}
-            </button>
-            <button
-              onClick={() => setStaged([])}
-              className="font-mono text-[10px] tracking-widest opacity-60 hover:opacity-100"
-            >
-              CLEAR
-            </button>
-            {!gm.trim() && (
-              <span className="font-mono text-[10px] tracking-widest text-[var(--mustard)]">
-                ADD YOUR GM NAME FIRST
-              </span>
-            )}
+          {rosterRules.length > 0 && (
+            <div className="mt-3 border rule border-[color:var(--rule-soft)] p-2.5">
+              <div className="font-mono text-[9px] tracking-widest opacity-50 mb-1">
+                AFFILIATE ROSTER AFTER THIS BATCH
+              </div>
+              <Rules items={rosterRules} />
+            </div>
+          )}
+
+          {/* sign-off ----------------------------------------------------- */}
+          <div className="mt-5 pt-4 border-t rule border-[color:var(--rule-soft)]">
+            <div className="eyebrow opacity-60 mb-2">SIGN OFF</div>
+            <div className="flex flex-wrap items-center gap-3">
+              <input
+                value={gm}
+                onChange={(e) => saveGm(e.target.value)}
+                placeholder="YOUR GM NAME"
+                className="bg-transparent border rule px-3 py-2 font-mono text-[11px] tracking-widest outline-none focus:border-[var(--leather)] w-52"
+              />
+              <button
+                onClick={() => void handleSubmit()}
+                disabled={submitting || !gm.trim() || blocked}
+                className="border rule px-4 py-2 font-mono text-xs tracking-widest hover:bg-[var(--paper)] hover:text-[var(--ink)] transition-colors disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-inherit"
+              >
+                {submitting ? <span className="spinner" /> : "SEND TO MODS"}
+              </button>
+              <button
+                onClick={() => setStaged([])}
+                className="font-mono text-[10px] tracking-widest opacity-60 hover:opacity-100"
+              >
+                CLEAR
+              </button>
+              {blocked ? (
+                <span className="font-mono text-[10px] tracking-widest text-[var(--leather)]">
+                  A HARD RULE BLOCKS THIS BATCH
+                </span>
+              ) : (
+                !gm.trim() && (
+                  <span className="font-mono text-[10px] tracking-widest text-[var(--mustard)]">
+                    ADD YOUR GM NAME TO SEND
+                  </span>
+                )
+              )}
+            </div>
           </div>
         </div>
       )}

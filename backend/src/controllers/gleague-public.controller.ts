@@ -12,6 +12,7 @@ import {
   buildBoard,
   pendingRequests,
   submitProposals,
+  validateProposals,
   type Proposal,
 } from "../services/gleague-board.service.js";
 import { getCurrentSeason } from "../services/season.service.js";
@@ -38,6 +39,11 @@ const proposalSchema = z.discriminatedUnion("direction", [
     glPid: z.number().int(),
     mainAbbrev: z.string().min(1).max(8),
     years: z.number().int().min(2).max(5),
+  }),
+  z.object({
+    direction: z.literal("RELEASE"),
+    glPid: z.number().int(),
+    mainAbbrev: z.string().min(1).max(8),
   }),
 ]);
 
@@ -101,6 +107,23 @@ export async function withdraw(req: Request, res: Response, next: NextFunction) 
       throw new LeagueFetchError("That request is not pending, or belongs to another team", 404);
     }
     res.json({ ok: true });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * Dry-run a batch: what each move costs and which rules it trips, without
+ * writing anything. This is what puts real contract figures in front of a GM
+ * before they commit to sending the request.
+ */
+export async function preview(req: Request, res: Response, next: NextFunction) {
+  try {
+    const parsed = z
+      .object({ moves: z.array(proposalSchema).min(1).max(20) })
+      .safeParse(req.body);
+    if (!parsed.success) throw new LeagueFetchError("Invalid preview request", 400);
+    res.json(await validateProposals(await currentSeasonId(), parsed.data.moves as Proposal[]));
   } catch (err) {
     next(err);
   }

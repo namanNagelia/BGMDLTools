@@ -173,7 +173,7 @@ export const glTeams = pgTable("gl_teams", {
   roster: jsonb("roster"),
 });
 
-export const glDirectionEnum = pgEnum("gl_direction", ["ASSIGN", "CALLUP"]);
+export const glDirectionEnum = pgEnum("gl_direction", ["ASSIGN", "CALLUP", "RELEASE"]);
 export const glMoveStatusEnum = pgEnum("gl_move_status", [
   "PROPOSED",
   "COMMITTED",

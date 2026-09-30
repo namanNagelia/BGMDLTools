@@ -21,9 +21,12 @@ import {
 } from "./gleague.service.js";
 import {
   buildLeagueCtx,
+  checkAffiliateRoster,
   checkAssignEligibility,
   checkCallUp,
+  checkRelease,
   detectForcedCallUps,
+  projectRoster,
   isRookieContract,
   playerAge,
   playerKey,
@@ -34,7 +37,7 @@ import {
   type BbgmPlayer,
   type Violation,
 } from "./gleague-rules.service.js";
-import { fromBbgmAmount, MIN_CALLUP_OVR } from "./gleague.constants.js";
+import { fromBbgmAmount, GL_MIN_ROSTER, MIN_CALLUP_OVR } from "./gleague.constants.js";
 import { applyMoves, type GLeagueMove } from "./gleague-transfer.service.js";
 import { replayLedger } from "./gleague-replay.service.js";
 import {
@@ -261,10 +264,21 @@ export type Proposal =
       mainAbbrev: string;
       years: number;
       overrideReason?: string;
-    };
+    }
+  | { direction: "RELEASE"; glPid: number; mainAbbrev: string; overrideReason?: string };
+
+/** Which affiliate a proposal acts on, by parent-club abbrev. */
+function proposalTeam(p: Proposal, map: AffiliateMap): string | null {
+  if (p.direction === "ASSIGN") {
+    return map.pairs.find((x) => x.glAbbrev === p.glAbbrev)?.mainAbbrev ?? null;
+  }
+  return p.mainAbbrev;
+}
 
 export type StagedMove = {
   proposal: Proposal;
+  /** Set on a release: was he sent down, or an original G-Leaguer? */
+  wasAssigned?: boolean;
   playerName: string;
   ovr: number;
   age: number;
@@ -289,6 +303,7 @@ export async function validateProposals(
   const payrolls = buildMainPayrolls(main);
   const rosters = buildAffiliateRosters(gl, map);
   const minContractM = fromBbgmAmount((main.gameAttributes.minContract as number) ?? 1000);
+  const glSeason = gl.gameAttributes.season as number;
 
   const staged: StagedMove[] = [];
 
@@ -296,51 +311,46 @@ export async function validateProposals(
     if (proposal.direction === "ASSIGN") {
       const p = main.players.find((x) => x.pid === proposal.pid);
       if (!p) {
-        staged.push({
-          proposal,
-          playerName: `pid ${proposal.pid}`,
-          ovr: 0,
-          age: 0,
-          violations: [{ code: "NOT_FOUND", severity: "HARD", message: "Player not in the main export" }],
-          blocked: true,
-        });
+        staged.push(notFound(proposal, `pid ${proposal.pid}`, "Player not in the main export"));
         continue;
-      }
-      const violations = checkAssignEligibility(p, { ...ctx, topDraftClassPids: topPids });
-      const roster = rosters.find((r) => r.glAbbrev === proposal.glAbbrev);
-      if (roster) {
-        // Preview the roster after this assignment lands.
-        violations.push(
-          ...roster.violations.filter((v) => v.code === "TOO_MANY_ASSIGNED" || v.code === "HOARD_LIMIT"),
-        );
       }
       staged.push({
         proposal,
         playerName: playerName(p),
         ovr: playerOvr(p, ctx.season),
         age: playerAge(p, ctx.season),
-        violations,
-        blocked: violations.some((v) => v.severity === "HARD"),
+        violations: checkAssignEligibility(p, { ...ctx, topDraftClassPids: topPids }),
+        blocked: false,
       });
       continue;
     }
 
     const p = gl.players.find((x) => x.pid === proposal.glPid);
     if (!p) {
+      staged.push(notFound(proposal, `pid ${proposal.glPid}`, "Player not in the G-League export"));
+      continue;
+    }
+    const ovr = playerOvr(p, glSeason);
+    const snap = await latestAssignSnapshot(seasonId, playerKey(p));
+
+    if (proposal.direction === "RELEASE") {
       staged.push({
         proposal,
-        playerName: `pid ${proposal.glPid}`,
-        ovr: 0,
-        age: 0,
-        violations: [{ code: "NOT_FOUND", severity: "HARD", message: "Player not in the G-League export" }],
-        blocked: true,
+        playerName: playerName(p),
+        ovr,
+        age: playerAge(p, glSeason),
+        wasAssigned: p.watch === 1,
+        // Roster size is projected below; this call only covers the service rule.
+        violations: checkRelease({
+          assigned: p.watch === 1,
+          assignedThisSeason: snap != null,
+          rosterSizeAfter: GL_MIN_ROSTER,
+        }),
+        blocked: false,
       });
       continue;
     }
 
-    const glSeason = gl.gameAttributes.season as number;
-    const ovr = playerOvr(p, glSeason);
-    const snap = await latestAssignSnapshot(seasonId, playerKey(p));
     const contract = resolveCallUpContract({
       snapshot: snap ? { amountM: snap.amountM, exp: snap.exp } : null,
       ovr,
@@ -350,23 +360,20 @@ export async function validateProposals(
       minContractM,
     });
 
-    const violations = checkCallUp({
-      ovr,
-      payrollM: payrolls.get(proposal.mainAbbrev) ?? 0,
-      contractM: contract.amountM,
-      hardCapM: HARD_CAP,
-      // Ledger-tracked service time lands with the season-rollover work; until
-      // then a call-up is not blocked on it.
-      seasonsServed: 1,
-    });
-
     staged.push({
       proposal,
       playerName: playerName(p),
       ovr,
       age: playerAge(p, glSeason),
-      violations,
-      blocked: violations.some((v) => v.severity === "HARD"),
+      violations: checkCallUp({
+        ovr,
+        payrollM: payrolls.get(proposal.mainAbbrev) ?? 0,
+        contractM: contract.amountM,
+        hardCapM: HARD_CAP,
+        // Service time is enforced on release, not on recall.
+        seasonsServed: 1,
+      }),
+      blocked: false,
       contract: {
         amountM: contract.amountM,
         exp: contract.exp,
@@ -376,7 +383,62 @@ export async function validateProposals(
     });
   }
 
+  // Roster limits judged on the batch's result, not its starting point.
+  attachProjectedRosterViolations(staged, rosters, map);
+
+  for (const s of staged) s.blocked = s.violations.some((v) => v.severity === "HARD");
   return { staged, blocked: staged.some((s) => s.blocked) };
+}
+
+function notFound(proposal: Proposal, label: string, message: string): StagedMove {
+  return {
+    proposal,
+    playerName: label,
+    ovr: 0,
+    age: 0,
+    violations: [{ code: "NOT_FOUND", severity: "HARD", message }],
+    blocked: true,
+  };
+}
+
+/**
+ * Judge each affiliate's roster on what the whole batch leaves behind.
+ *
+ * Staging three assignments onto a full affiliate is legal move-by-move and
+ * illegal as a batch, so the limits have to be applied to the projection.
+ */
+function attachProjectedRosterViolations(
+  staged: StagedMove[],
+  rosters: AffiliateRoster[],
+  map: AffiliateMap,
+): void {
+  const byTeam = new Map<string, StagedMove[]>();
+  for (const s of staged) {
+    if (s.violations.some((v) => v.code === "NOT_FOUND")) continue;
+    const team = proposalTeam(s.proposal, map);
+    if (!team) continue;
+    byTeam.set(team, [...(byTeam.get(team) ?? []), s]);
+  }
+
+  for (const [team, moves] of byTeam) {
+    const roster = rosters.find((r) => r.mainAbbrev === team);
+    if (!roster) continue;
+
+    const projected = projectRoster(roster.players, {
+      assignIn: moves.filter((m) => m.proposal.direction === "ASSIGN").length,
+      callUpOut: moves
+        .filter((m) => m.proposal.direction === "CALLUP")
+        .map((m) => (m.proposal as { glPid: number }).glPid),
+      releaseOut: moves
+        .filter((m) => m.proposal.direction === "RELEASE")
+        .map((m) => (m.proposal as { glPid: number }).glPid),
+    });
+
+    const violations = checkAffiliateRoster(projected);
+    if (!violations.length) continue;
+    // Attach to every move in the batch — any one of them could be dropped to fix it.
+    for (const m of moves) m.violations = [...m.violations, ...violations];
+  }
 }
 
 /**
@@ -406,6 +468,10 @@ export async function commitProposals(
       const glTid = glTidByAbbrev.get(proposal.glAbbrev);
       if (glTid == null) throw new LeagueFetchError(`Unknown affiliate ${proposal.glAbbrev}`, 400);
       moves.push({ direction: "ASSIGN", pid: proposal.pid, glTid });
+      continue;
+    }
+    if (proposal.direction === "RELEASE") {
+      moves.push({ direction: "RELEASE", glPid: proposal.glPid });
       continue;
     }
     const mainTid = mainTidByAbbrev.get(proposal.mainAbbrev);
@@ -457,6 +523,7 @@ async function toLedgerEntries(
 
   for (const [i, proposal] of proposals.entries()) {
     const isAssign = proposal.direction === "ASSIGN";
+    const isRelease = proposal.direction === "RELEASE";
     const source = isAssign
       ? main.players.find((x) => x.pid === proposal.pid)
       : gl.players.find((x) => x.pid === proposal.glPid);
@@ -486,7 +553,7 @@ async function toLedgerEntries(
       snapWasRookie: isAssign ? isRookieContract(source, ctx) : (snapshot?.wasRookie ?? false),
       newContractAmount: staged[i].contract?.amountM ?? null,
       newContractExp: staged[i].contract?.exp ?? null,
-      newContractYears: isAssign ? null : proposal.years,
+      newContractYears: proposal.direction === "CALLUP" ? proposal.years : null,
       contractSource: (staged[i].contract?.source as LedgerEntry["contractSource"]) ?? null,
       rfaRightsLost: staged[i].contract?.rfaRightsLost ?? false,
       forced: false,
@@ -547,16 +614,20 @@ export async function approveMoves(
   if (!pending.length) return { committed: [] };
 
   const pair = await loadPair(seasonId, opts);
-  const proposals: Proposal[] = pending.map((r) =>
-    r.direction === "ASSIGN"
-      ? { direction: "ASSIGN", pid: r.mainPid!, glAbbrev: r.glTeamAbbrev }
-      : {
-          direction: "CALLUP",
-          glPid: r.glPid!,
-          mainAbbrev: r.mainTeamAbbrev,
-          years: r.newContractYears ?? 2,
-        },
-  );
+  const proposals: Proposal[] = pending.map((r) => {
+    if (r.direction === "ASSIGN") {
+      return { direction: "ASSIGN", pid: r.mainPid!, glAbbrev: r.glTeamAbbrev };
+    }
+    if (r.direction === "RELEASE") {
+      return { direction: "RELEASE", glPid: r.glPid!, mainAbbrev: r.mainTeamAbbrev };
+    }
+    return {
+      direction: "CALLUP",
+      glPid: r.glPid!,
+      mainAbbrev: r.mainTeamAbbrev,
+      years: r.newContractYears ?? 2,
+    };
+  });
 
   const { staged, blocked } = await validateProposals(seasonId, proposals, opts);
   if (blocked) {
@@ -575,6 +646,8 @@ export async function approveMoves(
         ? { direction: "ASSIGN" as const, pid: p.pid, glTid: pair.map.glTidByMainTid.get(
             pair.map.pairs.find((x) => x.glAbbrev === p.glAbbrev)!.mainTid,
           )! }
+        : p.direction === "RELEASE"
+        ? { direction: "RELEASE" as const, glPid: p.glPid }
         : {
             direction: "CALLUP" as const,
             glPid: p.glPid,

@@ -5,6 +5,7 @@ const router: Router = Router();
 
 router.get("/board", controller.getBoard);
 router.get("/requests", controller.listMine);
+router.post("/requests/preview", controller.preview);
 router.post("/requests", controller.submit);
 router.post("/requests/:id/withdraw", controller.withdraw);
 

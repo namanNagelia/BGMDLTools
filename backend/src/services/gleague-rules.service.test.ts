@@ -5,7 +5,9 @@ import {
   checkAffiliateRoster,
   checkAssignEligibility,
   checkCallUp,
+  checkRelease,
   detectForcedCallUps,
+  projectRoster,
   isRookieContract,
   playerAge,
   playerOvr,
@@ -350,5 +352,89 @@ describe("detectForcedCallUps", () => {
   // Original G-Leaguers were never assigned, so the criteria never bound them.
   test("ignores unflagged original G-Leaguers however good they get", () => {
     expect(detectForcedCallUps([p({ ovr: 70, age: 35, assigned: false })])).toStrictEqual([]);
+  });
+});
+
+/**
+ * Misc rules: "Assigned players have to play 1 season in G-League before being
+ * eligible to be released." We can check that exactly — if the player has an
+ * ASSIGN row in this same season's ledger, he was sent down this preseason and
+ * has not served anything yet.
+ */
+describe("checkRelease", () => {
+  const base = { assigned: true, assignedThisSeason: false, rosterSizeAfter: 6 };
+
+  test("an assigned player who has served a season can be released", () => {
+    expect(checkRelease(base)).toStrictEqual([]);
+  });
+
+  test("blocks releasing a player sent down this same preseason", () => {
+    const vs = checkRelease({ ...base, assignedThisSeason: true });
+    expect(vs.map((v) => v.code)).toContain("SEASON_NOT_SERVED");
+    expect(vs.find((v) => v.code === "SEASON_NOT_SERVED")!.severity).toBe("HARD");
+  });
+
+  // Original G-Leaguers were never assigned, so the service rule never applied.
+  test("an original G-Leaguer can be released at any time", () => {
+    expect(checkRelease({ assigned: false, assignedThisSeason: false, rosterSizeAfter: 6 })).toStrictEqual([]);
+  });
+
+  test("warns when the release would drop the roster under the minimum", () => {
+    const vs = checkRelease({ ...base, rosterSizeAfter: 4 });
+    expect(vs.map((v) => v.code)).toContain("BELOW_MIN_ROSTER");
+    expect(vs.find((v) => v.code === "BELOW_MIN_ROSTER")!.severity).toBe("SOFT");
+  });
+
+  test("landing exactly on the 5-man minimum is fine", () => {
+    expect(checkRelease({ ...base, rosterSizeAfter: 5 })).toStrictEqual([]);
+  });
+});
+
+/**
+ * Roster limits have to be judged on what the roster will look like AFTER the
+ * whole staged batch lands, not on what it looks like now. Staging three
+ * assignments onto a 7-man affiliate is the case that matters.
+ */
+describe("projectRoster", () => {
+  const roster = (assigned: number, original: number) => [
+    ...Array.from({ length: assigned }, (_, i) => ({ pid: i, assigned: true })),
+    ...Array.from({ length: original }, (_, i) => ({ pid: 100 + i, assigned: false })),
+  ];
+
+  test("an assignment adds an assigned player", () => {
+    const out = projectRoster(roster(4, 2), { assignIn: 1, callUpOut: [], releaseOut: [] });
+    expect(out).toHaveLength(7);
+    expect(out.filter((p) => p.assigned)).toHaveLength(5);
+  });
+
+  test("a call-up removes that player", () => {
+    const out = projectRoster(roster(5, 2), { assignIn: 0, callUpOut: [0], releaseOut: [] });
+    expect(out).toHaveLength(6);
+    expect(out.some((p) => p.pid === 0)).toBe(false);
+  });
+
+  test("a release removes that player", () => {
+    const out = projectRoster(roster(5, 2), { assignIn: 0, callUpOut: [], releaseOut: [100] });
+    expect(out).toHaveLength(6);
+  });
+
+  test("a batch of three assignments onto a full roster overflows it", () => {
+    const out = projectRoster(roster(5, 2), { assignIn: 3, callUpOut: [], releaseOut: [] });
+    expect(out).toHaveLength(10);
+    const codes = checkAffiliateRoster(out).map((v) => v.code);
+    expect(codes).toContain("ABOVE_MAX_ROSTER");
+    expect(codes).toContain("TOO_MANY_ASSIGNED");
+  });
+
+  test("assigning while calling one up keeps the roster legal", () => {
+    const out = projectRoster(roster(5, 2), { assignIn: 1, callUpOut: [0], releaseOut: [] });
+    expect(out).toHaveLength(7);
+    expect(checkAffiliateRoster(out)).toStrictEqual([]);
+  });
+
+  test("emptying a roster trips the minimum", () => {
+    const out = projectRoster(roster(2, 0), { assignIn: 0, callUpOut: [0, 1], releaseOut: [] });
+    expect(out).toStrictEqual([]);
+    expect(checkAffiliateRoster(out).map((v) => v.code)).toContain("BELOW_MIN_ROSTER");
   });
 });

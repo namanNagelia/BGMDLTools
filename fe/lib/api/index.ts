@@ -612,8 +612,10 @@ export interface GlBoardTeam {
 
 export interface GlLedgerRow {
   id: number;
-  direction: "ASSIGN" | "CALLUP";
+  direction: "ASSIGN" | "CALLUP" | "RELEASE";
   playerName: string;
+  mainPid: number | null;
+  glPid: number | null;
   mainTeamAbbrev: string;
   glTeamAbbrev: string;
   ovrAtMove: number;
@@ -645,10 +647,13 @@ export interface GlBoard {
 
 export type GlProposal =
   | { direction: "ASSIGN"; pid: number; glAbbrev: string; overrideReason?: string }
-  | { direction: "CALLUP"; glPid: number; mainAbbrev: string; years: number; overrideReason?: string };
+  | { direction: "CALLUP"; glPid: number; mainAbbrev: string; years: number; overrideReason?: string }
+  | { direction: "RELEASE"; glPid: number; mainAbbrev: string; overrideReason?: string };
 
 export interface GlStagedMove {
   proposal: GlProposal;
+  /** On a release: was he sent down, or an original G-Leaguer? */
+  wasAssigned?: boolean;
   playerName: string;
   ovr: number;
   age: number;
@@ -725,9 +730,11 @@ export const gleague = {
 
 export interface GlRequestRow {
   id: number;
-  direction: "ASSIGN" | "CALLUP";
+  direction: "ASSIGN" | "CALLUP" | "RELEASE";
   status: "PROPOSED" | "COMMITTED" | "DECLINED";
   playerName: string;
+  mainPid: number | null;
+  glPid: number | null;
   mainTeamAbbrev: string;
   glTeamAbbrev: string;
   ovrAtMove: number;
@@ -754,6 +761,13 @@ export const gleaguePublic = {
     return request("/api/gleague/requests", {
       method: "POST",
       body: JSON.stringify({ teamAbbrev, gm, moves }),
+    });
+  },
+
+  async preview(moves: GlProposal[]): Promise<{ staged: GlStagedMove[]; blocked: boolean }> {
+    return request("/api/gleague/requests/preview", {
+      method: "POST",
+      body: JSON.stringify({ moves }),
     });
   },
 

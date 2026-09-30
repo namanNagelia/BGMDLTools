@@ -59,7 +59,7 @@ export async function cacheGlTeams(seasonId: number, rosters: CachedRoster[]): P
 }
 
 export type LedgerEntry = {
-  direction: "ASSIGN" | "CALLUP";
+  direction: "ASSIGN" | "CALLUP" | "RELEASE";
   playerKey: string;
   playerName: string;
   bornYear: number;

@@ -28,6 +28,11 @@ export function ledgerToMoves(rows: LedgerEntry[], map: AffiliateMap): GLeagueMo
       continue;
     }
 
+    if (row.direction === "RELEASE") {
+      if (row.glPid != null) out.push({ direction: "RELEASE", glPid: row.glPid });
+      continue;
+    }
+
     const mainTid = mainTidByAbbrev.get(row.mainTeamAbbrev);
     if (mainTid == null || row.glPid == null) continue;
     out.push({

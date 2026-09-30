@@ -287,3 +287,73 @@ export function detectForcedCallUps(roster: AffiliateRosterSlot[]): ForcedCallUp
   }
   return out;
 }
+
+export type ReleaseCheckInput = {
+  /** Was he sent down from the main league, or is he an original G-Leaguer? */
+  assigned: boolean;
+  /** Does this season's ledger already contain his assignment? */
+  assignedThisSeason: boolean;
+  /** Affiliate roster size once the release lands. */
+  rosterSizeAfter: number;
+};
+
+/**
+ * Misc rules: "Assigned players have to play 1 season in G-League before being
+ * eligible to be released."
+ *
+ * An ASSIGN row in this season's ledger means he was sent down this preseason
+ * and has served nothing, so that release is blocked outright. Original
+ * G-Leaguers were never assigned and the rule never bound them.
+ */
+export function checkRelease(input: ReleaseCheckInput): Violation[] {
+  const out: Violation[] = [];
+
+  if (input.assigned && input.assignedThisSeason) {
+    out.push(
+      hard(
+        "SEASON_NOT_SERVED",
+        "assigned this preseason — must play a full G-League season before he can be released",
+      ),
+    );
+  }
+  if (input.rosterSizeAfter < GL_MIN_ROSTER) {
+    out.push(
+      soft(
+        "BELOW_MIN_ROSTER",
+        `roster would fall to ${input.rosterSizeAfter} — minimum is ${GL_MIN_ROSTER}`,
+      ),
+    );
+  }
+  return out;
+}
+
+export type RosterDelta = {
+  /** How many players the batch sends down to this affiliate. */
+  assignIn: number;
+  /** G-League pids the batch calls up. */
+  callUpOut: number[];
+  /** G-League pids the batch releases. */
+  releaseOut: number[];
+};
+
+/**
+ * The affiliate roster as it will stand once a whole staged batch lands.
+ *
+ * Roster limits have to be judged on the result, not the starting point —
+ * otherwise staging three assignments onto a full roster looks legal right up
+ * until it is committed.
+ */
+export function projectRoster<T extends { pid: number; assigned: boolean }>(
+  roster: T[],
+  delta: RosterDelta,
+): Array<{ pid: number; assigned: boolean }> {
+  const leaving = new Set([...delta.callUpOut, ...delta.releaseOut]);
+  const kept: Array<{ pid: number; assigned: boolean }> = roster
+    .filter((p) => !leaving.has(p.pid))
+    .map((p) => ({ pid: p.pid, assigned: p.assigned }));
+
+  for (let i = 0; i < delta.assignIn; i++) {
+    kept.push({ pid: -(i + 1), assigned: true });
+  }
+  return kept;
+}
