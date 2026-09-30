@@ -10,8 +10,16 @@ import { readFileSync } from "node:fs";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { glMoves, glTeams, seasons } from "../db/schema.js";
-import { buildBoard, commitProposals, loadPair, validateProposals } from "./gleague-board.service.js";
-import { setGlLeagueLink } from "./gleague-season.service.js";
+import {
+  approveMoves,
+  buildBoard,
+  commitProposals,
+  invalidateBoard,
+  loadPair,
+  submitProposals,
+  validateProposals,
+} from "./gleague-board.service.js";
+import { declineMoves, proposeMoves, setGlLeagueLink } from "./gleague-season.service.js";
 import { BBGM_TID } from "./gleague.constants.js";
 
 const MAIN_URL = "https://fixture.test/main.json";
@@ -46,6 +54,8 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.delete(glMoves).where(eq(glMoves.seasonId, seasonId));
   await db.delete(glTeams).where(eq(glTeams.seasonId, seasonId));
+  // These tests mutate the ledger directly, behind the board cache's back.
+  invalidateBoard(seasonId);
 });
 
 /** Chevy Smith — BOS, 52 OVR, 24, $1M through 2191. */
@@ -237,5 +247,150 @@ describe("commit and replay", () => {
     const after = (await buildBoard(seasonId, opts)).teams.find((t) => t.mainAbbrev === "BOS")!;
 
     expect(after.mainPayrollM).toBeCloseTo(before.mainPayrollM - 1, 5);
+  });
+});
+
+/**
+ * The gate that matters: a GM's submission is a request, not a move. Until a
+ * mod approves it, it must be invisible to the exports.
+ */
+describe("pending submissions never reach an export", () => {
+  const waters = () => ({
+    direction: "ASSIGN" as const,
+    playerKey: "j.d. waters|2163",
+    playerName: "J.D. Waters",
+    bornYear: 2163,
+    mainPid: 17337,
+    glPid: null,
+    mainTeamAbbrev: "NOP",
+    glTeamAbbrev: "NOP",
+    ovrAtMove: 45,
+    ageAtMove: 24,
+    snapContractAmount: 1,
+    snapContractExp: 2189,
+    snapWasRookie: false,
+  });
+
+  test("a proposed assignment leaves both exports untouched", async () => {
+    await proposeMoves(seasonId, [waters()], { gm: "Naman", teamAbbrev: "NOP" });
+
+    const { main, gl } = await loadPair(seasonId, opts);
+    const p = main.players.find((x) => x.pid === 17337)!;
+
+    expect(p.tid).toBeGreaterThanOrEqual(0); // still on his main roster
+    expect(gl.players.some((x) => `${x.firstName} ${x.lastName}` === "J.D. Waters" && x.tid >= 0)).toBe(false);
+  });
+
+  test("a proposed assignment does not change the board", async () => {
+    const before = await buildBoard(seasonId, opts);
+    await proposeMoves(seasonId, [waters()], { gm: "Naman", teamAbbrev: "NOP" });
+    const after = await buildBoard(seasonId, opts);
+
+    const nopBefore = before.teams.find((t) => t.glAbbrev === "NOP")!;
+    const nopAfter = after.teams.find((t) => t.glAbbrev === "NOP")!;
+    expect(nopAfter.players).toHaveLength(nopBefore.players.length);
+  });
+
+  test("a declined submission never applies", async () => {
+    const [p] = await proposeMoves(seasonId, [waters()], { gm: "Naman", teamAbbrev: "NOP" });
+    await declineMoves(seasonId, [p.id]);
+
+    const { main } = await loadPair(seasonId, opts);
+    expect(main.players.find((x) => x.pid === 17337)!.tid).toBeGreaterThanOrEqual(0);
+  });
+
+  test("approving it applies the move to both exports", async () => {
+    const [p] = await proposeMoves(seasonId, [waters()], { gm: "Naman", teamAbbrev: "NOP" });
+    const res = await approveMoves(seasonId, [p.id], opts);
+
+    expect(res.committed).toHaveLength(1);
+    expect(res.committed[0].status).toBe("COMMITTED");
+
+    const { main, gl } = await loadPair(seasonId, opts);
+    expect(main.players.find((x) => x.pid === 17337)!.tid).toBe(BBGM_TID.INACTIVE);
+    expect(gl.players.some((x) => `${x.firstName} ${x.lastName}` === "J.D. Waters" && x.tid >= 0)).toBe(true);
+  });
+
+  test("approving records the pids the move actually produced", async () => {
+    const [p] = await proposeMoves(seasonId, [waters()], { gm: "Naman", teamAbbrev: "NOP" });
+    const res = await approveMoves(seasonId, [p.id], opts);
+
+    expect(res.committed[0].glPid).not.toBeNull();
+    expect(res.committed[0].mainPid).toBe(17337);
+  });
+
+  test("refuses to approve a move that now breaks a hard rule", async () => {
+    // Tyrell Ard is 60 OVR — a GM could submit before a progression, or a mod
+    // could approve late. Either way the rules are checked again at approval.
+    const [p] = await proposeMoves(
+      seasonId,
+      [{ ...waters(), playerKey: "tyrell ard|2163", playerName: "Tyrell Ard", mainPid: 17267, mainTeamAbbrev: "LAL", glTeamAbbrev: "LAL", ovrAtMove: 60 }],
+      { gm: "Someone", teamAbbrev: "LAL" },
+    );
+    await expect(approveMoves(seasonId, [p.id], opts)).rejects.toThrow(/hard rule/i);
+  });
+});
+
+/**
+ * The public page can't refetch ~300MB of BBGM per visitor. The built board is
+ * cached per season and invalidated whenever the ledger changes.
+ */
+describe("board cache", () => {
+  let fetches = 0;
+  const counting = {
+    fetchJson: async (link: string) => {
+      fetches++;
+      return source(link);
+    },
+  };
+
+  beforeEach(() => {
+    fetches = 0;
+    invalidateBoard(seasonId);
+  });
+
+  test("a second load serves from cache without refetching the exports", async () => {
+    await buildBoard(seasonId, counting);
+    const after1 = fetches;
+    await buildBoard(seasonId, counting);
+
+    expect(after1).toBeGreaterThan(0);
+    expect(fetches).toBe(after1);
+  });
+
+  test("the cached board has the same contents as the first build", async () => {
+    const a = await buildBoard(seasonId, counting);
+    const b = await buildBoard(seasonId, counting);
+    expect(b.teams).toHaveLength(a.teams.length);
+    expect(b.mainSeason).toBe(a.mainSeason);
+  });
+
+  test("committing a move invalidates it, so the next board reflects the change", async () => {
+    const before = await buildBoard(seasonId, counting);
+    const bosBefore = before.teams.find((t) => t.glAbbrev === "BOS")!.players.length;
+
+    await commitProposals(seasonId, [{ direction: "ASSIGN", pid: CHEVY, glAbbrev: "BOS" }], counting);
+
+    const after = await buildBoard(seasonId, counting);
+    expect(after.teams.find((t) => t.glAbbrev === "BOS")!.players).toHaveLength(bosBefore + 1);
+  });
+
+  test("a GM's submission invalidates it too, so the pending count is current", async () => {
+    await buildBoard(seasonId, counting);
+    await submitProposals(
+      seasonId,
+      [{ direction: "ASSIGN", pid: CHEVY, glAbbrev: "BOS" }],
+      { gm: "Naman", teamAbbrev: "BOS" },
+      counting,
+    );
+    const after = await buildBoard(seasonId, counting);
+    expect(after.pendingCount).toBe(1);
+  });
+
+  test("forcing a refresh refetches even when a cached board exists", async () => {
+    await buildBoard(seasonId, counting);
+    const after1 = fetches;
+    await buildBoard(seasonId, { ...counting, fresh: true });
+    expect(fetches).toBeGreaterThan(after1);
   });
 });

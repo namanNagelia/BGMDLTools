@@ -11,5 +11,9 @@ router.get("/:id/board", controller.getBoard);
 router.post("/:id/validate", controller.validateBatch);
 router.post("/:id/commit", controller.commitBatch);
 router.get("/:id/export/:side", controller.downloadExport);
+router.get("/:id/requests", controller.listPending);
+router.post("/:id/requests/approve", controller.approvePending);
+router.post("/:id/requests/decline", controller.declinePending);
+router.post("/:id/refresh", controller.refreshBoard);
 
 export default router;

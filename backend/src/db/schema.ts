@@ -222,5 +222,11 @@ export const glMoves = pgTable("gl_moves", {
   forced: boolean("forced").default(false).notNull(),
   /** Mod-recorded override of a soft rule (roster shape, service time). */
   overrideReason: text("override_reason"),
+  /**
+   * The GM who submitted this from the public page. Attribution, not
+   * authorization — the public page has no secret, so the approval queue is
+   * what actually gates a move reaching an export.
+   */
+  submittedByGm: text("submitted_by_gm"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });

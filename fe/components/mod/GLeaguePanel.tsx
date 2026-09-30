@@ -7,6 +7,7 @@ import {
   type GlBoard,
   type GlBoardTeam,
   type GlProposal,
+  type GlRequestRow,
   type GlStagedMove,
   type GlViolation,
   type Season,
@@ -101,6 +102,8 @@ export function GLeaguePanel({ season }: { season: Season }) {
   const [preview, setPreview] = useState<GlStagedMove[]>([]);
   const [committing, setCommitting] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  const [pending, setPending] = useState<GlRequestRow[]>([]);
+  const [acting, setActing] = useState(false);
 
   const team = useMemo(
     () => board?.teams.find((t) => t.mainAbbrev === selected) ?? null,
@@ -111,8 +114,12 @@ export function GLeaguePanel({ season }: { season: Season }) {
     setLoading(true);
     setError(null);
     try {
-      const b = await gleague.board(season.id);
+      const [b, reqs] = await Promise.all([
+        gleague.board(season.id),
+        gleague.pending(season.id).catch(() => [] as GlRequestRow[]),
+      ]);
       setBoard(b);
+      setPending(reqs);
       setSelected((cur) => cur ?? b.teams[0]?.mainAbbrev ?? null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load the G-League board");
@@ -182,6 +189,38 @@ export function GLeaguePanel({ season }: { season: Season }) {
     }
   }
 
+  async function actOnRequests(ids: number[], approve: boolean) {
+    setActing(true);
+    setError(null);
+    try {
+      if (approve) {
+        const res = await gleague.approve(season.id, ids);
+        setNote(`${res.committed.length} request(s) approved.`);
+      } else {
+        const res = await gleague.decline(season.id, ids);
+        setNote(`${res.declined.length} request(s) declined.`);
+      }
+      await loadBoard();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not act on those requests");
+    } finally {
+      setActing(false);
+    }
+  }
+
+  async function handleRefresh() {
+    setLoading(true);
+    setError(null);
+    try {
+      await gleague.refresh(season.id);
+      await loadBoard();
+      setNote("Board rebuilt from the exports.");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Refresh failed");
+      setLoading(false);
+    }
+  }
+
   const blocked = preview.some((s) => s.blocked);
   const alreadyStaged = new Set(
     staged.map((m) => (m.direction === "ASSIGN" ? `a${m.pid}` : `c${m.glPid}`)),
@@ -227,8 +266,18 @@ export function GLeaguePanel({ season }: { season: Season }) {
         <div className="flex flex-wrap items-baseline justify-between gap-4 mt-2">
           <h2 className="display text-4xl">AFFILIATE DESK</h2>
           {board && (
-            <div className="font-mono text-[10px] tracking-widest opacity-60">
-              MAIN {board.mainSeason} · GL {board.glSeason} · HARD CAP ${board.hardCapM}M
+            <div className="flex items-center gap-3">
+              <div className="font-mono text-[10px] tracking-widest opacity-60">
+                MAIN {board.mainSeason} · GL {board.glSeason} · HARD CAP ${board.hardCapM}M
+              </div>
+              <button
+                onClick={() => void handleRefresh()}
+                disabled={loading}
+                title="The board is cached; this refetches both exports."
+                className="border rule px-2 py-1 font-mono text-[9px] tracking-widest hover:bg-[var(--paper)] hover:text-[var(--ink)] transition-colors disabled:opacity-40"
+              >
+                ⟳ REFRESH
+              </button>
             </div>
           )}
         </div>
@@ -243,6 +292,71 @@ export function GLeaguePanel({ season }: { season: Season }) {
           AFFILIATE MAP INCOMPLETE — unmatched G-League: [{board.unmatchedGl.join(", ") || "none"}] ·
           unmatched main: [{board.unmatchedMain.join(", ") || "none"}]. Check the two exports are
           from the same league era before committing anything.
+        </div>
+      )}
+
+      {/* GM request queue ---------------------------------------------- */}
+      {pending.length > 0 && (
+        <div className="border rule border-[var(--mustard)] p-4">
+          <div className="flex items-baseline justify-between gap-3">
+            <div className="eyebrow opacity-70">GM REQUESTS · {pending.length} WAITING</div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => void actOnRequests(pending.map((r) => r.id), true)}
+                disabled={acting}
+                className="border rule px-3 py-1 font-mono text-[10px] tracking-widest hover:bg-[var(--paper)] hover:text-[var(--ink)] transition-colors disabled:opacity-40"
+              >
+                APPROVE ALL
+              </button>
+              <button
+                onClick={() => void actOnRequests(pending.map((r) => r.id), false)}
+                disabled={acting}
+                className="font-mono text-[10px] tracking-widest opacity-60 hover:opacity-100 hover:text-[var(--leather)] disabled:opacity-30"
+              >
+                DECLINE ALL
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-3 space-y-1">
+            {pending.map((r) => (
+              <div
+                key={r.id}
+                className="flex items-center gap-3 border-b rule border-[color:var(--rule-soft)] py-1.5"
+              >
+                <span className="font-mono text-[10px] tracking-widest w-14 shrink-0 opacity-70">
+                  {r.direction === "ASSIGN" ? "DOWN" : `UP ${r.newContractYears ?? ""}Y`}
+                </span>
+                <span className="flex-1 font-mono text-xs truncate">
+                  {r.playerName}
+                  <span className="opacity-50">
+                    {" "}
+                    · {r.mainTeamAbbrev}
+                  </span>
+                </span>
+                <span className="font-mono text-[10px] opacity-60 tabular-nums">
+                  {r.ovrAtMove} · {r.ageAtMove}yo
+                </span>
+                <span className="font-mono text-[10px] opacity-50 truncate max-w-[9rem]">
+                  {r.submittedByGm ?? "unknown GM"}
+                </span>
+                <button
+                  onClick={() => void actOnRequests([r.id], true)}
+                  disabled={acting}
+                  className="border rule px-2 py-0.5 font-mono text-[10px] tracking-widest hover:bg-[var(--paper)] hover:text-[var(--ink)] transition-colors disabled:opacity-30"
+                >
+                  APPROVE
+                </button>
+                <button
+                  onClick={() => void actOnRequests([r.id], false)}
+                  disabled={acting}
+                  className="font-mono text-[10px] tracking-widest opacity-50 hover:opacity-100 hover:text-[var(--leather)] disabled:opacity-30"
+                >
+                  DECLINE
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

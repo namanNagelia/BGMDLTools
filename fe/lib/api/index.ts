@@ -631,6 +631,8 @@ export interface GlLedgerRow {
 
 export interface GlBoard {
   seasonId: number;
+  pendingCount: number;
+  builtAt: string;
   mainSeason: number;
   glSeason: number;
   hardCapM: number;
@@ -688,7 +690,84 @@ export const gleague = {
     });
   },
 
+  async pending(seasonId: number): Promise<GlRequestRow[]> {
+    const res = await request<{ requests: GlRequestRow[] }>(
+      `/api/mod/gleague/${seasonId}/requests`,
+    );
+    return res.requests;
+  },
+
+  async approve(seasonId: number, moveIds: number[]): Promise<{ committed: GlRequestRow[] }> {
+    return request(`/api/mod/gleague/${seasonId}/requests/approve`, {
+      method: "POST",
+      body: JSON.stringify({ moveIds }),
+    });
+  },
+
+  async decline(seasonId: number, moveIds: number[]): Promise<{ declined: GlRequestRow[] }> {
+    return request(`/api/mod/gleague/${seasonId}/requests/decline`, {
+      method: "POST",
+      body: JSON.stringify({ moveIds }),
+    });
+  },
+
+  /** Drop the cached board and rebuild from the exports. */
+  async refresh(seasonId: number): Promise<GlBoard> {
+    return request(`/api/mod/gleague/${seasonId}/refresh`, { method: "POST" });
+  },
+
   exportUrl(seasonId: number, side: "main" | "gleague"): string {
     return `${BASE}/api/mod/gleague/${seasonId}/export/${side}`;
+  },
+};
+
+// ---- G-League: public (GM-facing) ----------------------------------------
+
+export interface GlRequestRow {
+  id: number;
+  direction: "ASSIGN" | "CALLUP";
+  status: "PROPOSED" | "COMMITTED" | "DECLINED";
+  playerName: string;
+  mainTeamAbbrev: string;
+  glTeamAbbrev: string;
+  ovrAtMove: number;
+  ageAtMove: number;
+  newContractAmount: string | null;
+  newContractExp: number | null;
+  newContractYears: number | null;
+  contractSource: "RESTORED" | "PAYSCALE" | "MINIMUM" | null;
+  rfaRightsLost: boolean;
+  submittedByGm: string | null;
+  createdAt: string;
+}
+
+export const gleaguePublic = {
+  async board(): Promise<GlBoard> {
+    return request<GlBoard>("/api/gleague/board");
+  },
+
+  async submit(
+    teamAbbrev: string,
+    gm: string,
+    moves: GlProposal[],
+  ): Promise<{ staged: GlStagedMove[]; submitted: GlRequestRow[] }> {
+    return request("/api/gleague/requests", {
+      method: "POST",
+      body: JSON.stringify({ teamAbbrev, gm, moves }),
+    });
+  },
+
+  async myRequests(teamAbbrev: string): Promise<GlRequestRow[]> {
+    const res = await request<{ requests: GlRequestRow[] }>(
+      `/api/gleague/requests?teamAbbrev=${encodeURIComponent(teamAbbrev)}`,
+    );
+    return res.requests;
+  },
+
+  async withdraw(id: number, teamAbbrev: string): Promise<void> {
+    await request<{ ok: true }>(`/api/gleague/requests/${id}/withdraw`, {
+      method: "POST",
+      body: JSON.stringify({ teamAbbrev }),
+    });
   },
 };

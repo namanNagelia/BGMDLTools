@@ -8,10 +8,16 @@ import { db } from "../db/client.js";
 import { glMoves, glTeams, seasons } from "../db/schema.js";
 import {
   cacheGlTeams,
+  declineMoves,
   latestAssignSnapshot,
+  listCommittedMoves,
   listMoves,
+  listProposals,
+  proposeMoves,
   recordMoves,
   setGlLeagueLink,
+  withdrawProposal,
+  type LedgerEntry,
 } from "./gleague-season.service.js";
 
 let seasonId: number;
@@ -211,5 +217,146 @@ describe("latestAssignSnapshot", () => {
   test("scopes snapshots to their season", async () => {
     await recordMoves(seasonId, [assignOf()]);
     expect(await latestAssignSnapshot(-1, "chevy smith|2163")).toBeNull();
+  });
+});
+
+/**
+ * Only approved moves may reach an export. A GM's submission sits at PROPOSED
+ * until a mod approves it, and a DECLINED row must never apply at all — the
+ * ledger replay reads this list, so anything leaking through here lands
+ * silently in the downloaded BBGM files.
+ */
+describe("listCommittedMoves", () => {
+  const row = (over: Partial<LedgerEntry> = {}): LedgerEntry => ({
+    direction: "ASSIGN",
+    playerKey: "chevy smith|2163",
+    playerName: "Chevy Smith",
+    bornYear: 2163,
+    mainPid: 17335,
+    glPid: 20001,
+    mainTeamAbbrev: "BOS",
+    glTeamAbbrev: "BOS",
+    ovrAtMove: 52,
+    ageAtMove: 24,
+    snapContractAmount: 1,
+    snapContractExp: 2191,
+    snapWasRookie: false,
+    ...over,
+  });
+
+  test("returns approved moves", async () => {
+    await recordMoves(seasonId, [row()]);
+    expect(await listCommittedMoves(seasonId)).toHaveLength(1);
+  });
+
+  test("hides a GM's pending submission", async () => {
+    await proposeMoves(seasonId, [row()], { gm: "Naman", teamAbbrev: "BOS" });
+    expect(await listCommittedMoves(seasonId)).toStrictEqual([]);
+  });
+
+  test("hides a declined submission", async () => {
+    const [p] = await proposeMoves(seasonId, [row()], { gm: "Naman", teamAbbrev: "BOS" });
+    await declineMoves(seasonId, [p.id]);
+    expect(await listCommittedMoves(seasonId)).toStrictEqual([]);
+  });
+
+  test("listMoves still shows every row regardless of status — that is the mod's view", async () => {
+    await recordMoves(seasonId, [row()]);
+    await proposeMoves(seasonId, [row({ playerName: "J.D. Waters" })], {
+      gm: "Naman",
+      teamAbbrev: "BOS",
+    });
+    expect(await listMoves(seasonId)).toHaveLength(2);
+    expect(await listCommittedMoves(seasonId)).toHaveLength(1);
+  });
+
+  test("returns approved moves oldest first, the order replay needs", async () => {
+    await recordMoves(seasonId, [row({ playerName: "First" })]);
+    await recordMoves(seasonId, [row({ playerName: "Second" })]);
+    const rows = await listCommittedMoves(seasonId);
+    expect(rows.map((r) => r.playerName)).toStrictEqual(["First", "Second"]);
+  });
+});
+
+describe("proposeMoves", () => {
+  const row = (over: Partial<LedgerEntry> = {}): LedgerEntry => ({
+    direction: "ASSIGN",
+    playerKey: "jd waters|2163",
+    playerName: "J.D. Waters",
+    bornYear: 2163,
+    mainPid: 17337,
+    glPid: null,
+    mainTeamAbbrev: "NOP",
+    glTeamAbbrev: "NOP",
+    ovrAtMove: 51,
+    ageAtMove: 25,
+    snapContractAmount: 1,
+    snapContractExp: 2191,
+    snapWasRookie: false,
+    ...over,
+  });
+
+  test("stores a submission as pending, attributed to the GM who sent it", async () => {
+    const [p] = await proposeMoves(seasonId, [row()], { gm: "Naman", teamAbbrev: "NOP" });
+    expect(p.status).toBe("PROPOSED");
+    expect(p.submittedByGm).toBe("Naman");
+    expect(p.playerName).toBe("J.D. Waters");
+  });
+
+  test("lists a team's pending submissions", async () => {
+    await proposeMoves(seasonId, [row()], { gm: "Naman", teamAbbrev: "NOP" });
+    await proposeMoves(seasonId, [row({ mainTeamAbbrev: "BOS", glTeamAbbrev: "BOS" })], {
+      gm: "Someone",
+      teamAbbrev: "BOS",
+    });
+
+    const nop = await listProposals(seasonId, "NOP");
+    expect(nop).toHaveLength(1);
+    expect(nop[0].mainTeamAbbrev).toBe("NOP");
+  });
+
+  test("lists every pending submission for the mod", async () => {
+    await proposeMoves(seasonId, [row()], { gm: "Naman", teamAbbrev: "NOP" });
+    await proposeMoves(seasonId, [row({ mainTeamAbbrev: "BOS", glTeamAbbrev: "BOS" })], {
+      gm: "Someone",
+      teamAbbrev: "BOS",
+    });
+    expect(await listProposals(seasonId)).toHaveLength(2);
+  });
+});
+
+describe("withdrawProposal", () => {
+  const row = (): LedgerEntry => ({
+    direction: "ASSIGN",
+    playerKey: "jd waters|2163",
+    playerName: "J.D. Waters",
+    bornYear: 2163,
+    mainPid: 17337,
+    glPid: null,
+    mainTeamAbbrev: "NOP",
+    glTeamAbbrev: "NOP",
+    ovrAtMove: 51,
+    ageAtMove: 25,
+    snapContractAmount: 1,
+    snapContractExp: 2191,
+    snapWasRookie: false,
+  });
+
+  test("a GM can pull back a submission that has not been approved", async () => {
+    const [p] = await proposeMoves(seasonId, [row()], { gm: "Naman", teamAbbrev: "NOP" });
+    expect(await withdrawProposal(seasonId, p.id, "NOP")).toBe(true);
+    expect(await listProposals(seasonId, "NOP")).toStrictEqual([]);
+  });
+
+  test("refuses to withdraw a move that is already approved", async () => {
+    const [committed] = await recordMoves(seasonId, [row()]);
+    expect(await withdrawProposal(seasonId, committed.id, "NOP")).toBe(false);
+    expect(await listCommittedMoves(seasonId)).toHaveLength(1);
+  });
+
+  test("refuses to withdraw another team's submission", async () => {
+    const [p] = await proposeMoves(seasonId, [row()], { gm: "Naman", teamAbbrev: "NOP" });
+    expect(await withdrawProposal(seasonId, p.id, "BOS")).toBe(false);
+    expect(await listProposals(seasonId, "NOP")).toHaveLength(1);
   });
 });

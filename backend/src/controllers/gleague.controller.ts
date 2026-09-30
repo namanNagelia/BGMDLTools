@@ -3,14 +3,17 @@ import { z } from "zod";
 import { createGzip, constants as zlibConstants } from "node:zlib";
 import { LeagueFetchError } from "../services/league.service.js";
 import {
+  approveMoves,
   buildBoard,
   commitProposals,
   getSeasonRow,
+  invalidateBoard,
   loadPair,
+  pendingRequests,
   validateProposals,
   type Proposal,
 } from "../services/gleague-board.service.js";
-import { listMoves, setGlLeagueLink } from "../services/gleague-season.service.js";
+import { declineMoves, listMoves, setGlLeagueLink } from "../services/gleague-season.service.js";
 import { upsertSeasonFromLink } from "../services/season.service.js";
 
 const seasonIdOf = (req: Request): number => {
@@ -147,6 +150,51 @@ export async function fetchGlLeague(req: Request, res: Response, next: NextFunct
     if (!parsed.success) throw new LeagueFetchError("leagueLink is required", 400);
     const result = await upsertSeasonFromLink({ leagueLink: parsed.data.leagueLink });
     res.json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+const idsSchema = z.object({ moveIds: z.array(z.number().int().positive()).min(1).max(200) });
+
+/** The queue of GM submissions waiting on a mod. */
+export async function listPending(req: Request, res: Response, next: NextFunction) {
+  try {
+    res.json({ requests: await pendingRequests(seasonIdOf(req)) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function approvePending(req: Request, res: Response, next: NextFunction) {
+  try {
+    const parsed = idsSchema.safeParse(req.body);
+    if (!parsed.success) throw new LeagueFetchError("moveIds is required", 400);
+    res.json(await approveMoves(seasonIdOf(req), parsed.data.moveIds));
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function declinePending(req: Request, res: Response, next: NextFunction) {
+  try {
+    const parsed = idsSchema.safeParse(req.body);
+    if (!parsed.success) throw new LeagueFetchError("moveIds is required", 400);
+    const seasonId = seasonIdOf(req);
+    const declined = await declineMoves(seasonId, parsed.data.moveIds);
+    invalidateBoard(seasonId);
+    res.json({ declined });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Drop the cached board so the next load refetches both exports. */
+export async function refreshBoard(req: Request, res: Response, next: NextFunction) {
+  try {
+    const seasonId = seasonIdOf(req);
+    invalidateBoard(seasonId);
+    res.json(await buildBoard(seasonId, { fresh: true }));
   } catch (err) {
     next(err);
   }
