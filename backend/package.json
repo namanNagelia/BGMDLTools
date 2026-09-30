@@ -12,7 +12,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "db:refresh-local": "bash scripts/refresh-local-db.sh"
   },
   "keywords": [],
   "author": "",
