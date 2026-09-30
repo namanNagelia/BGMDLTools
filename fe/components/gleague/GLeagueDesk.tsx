@@ -186,13 +186,19 @@ export function GLeagueDesk() {
   );
   const isMine = team?.mainAbbrev === myTeam;
 
-  /** Players on this team already sitting in the mod queue, by side. */
+  /**
+   * Players already sitting in the mod queue, keyed by pid on the side they
+   * appear on, carrying which action is pending so the badge can name it.
+   */
   const pendingPids = useMemo(() => {
-    const down = new Set<number>();
-    const gl = new Set<number>();
+    const down = new Map<number, GlRequestRow>();
+    const gl = new Map<number, GlRequestRow>();
     for (const r of mine) {
-      if (r.direction === "ASSIGN" && r.mainPid != null) down.add(r.mainPid);
-      else if (r.glPid != null) gl.add(r.glPid);
+      if (r.direction === "ASSIGN") {
+        if (r.mainPid != null) down.set(r.mainPid, r);
+      } else if (r.glPid != null) {
+        gl.set(r.glPid, r);
+      }
     }
     return { down, gl };
   }, [mine]);
@@ -357,10 +363,26 @@ export function GLeagueDesk() {
                 key={r.id}
                 className="flex items-center gap-3 border-b rule border-[color:var(--rule-soft)] py-1.5"
               >
-                <span className="font-mono text-[10px] tracking-widest w-14 shrink-0 opacity-70">
-                  {r.direction === "ASSIGN" ? "DOWN" : "UP"}
+                <span
+                  className={`font-mono text-[10px] tracking-widest w-20 shrink-0 ${
+                    r.direction === "RELEASE" ? "text-[var(--leather)]" : "opacity-70"
+                  }`}
+                >
+                  {r.direction === "ASSIGN"
+                    ? "SEND DOWN"
+                    : r.direction === "RELEASE"
+                      ? "CUT"
+                      : `CALL UP ${r.newContractYears ?? ""}Y`}
                 </span>
-                <span className="flex-1 font-mono text-xs truncate">{r.playerName}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="font-mono text-xs truncate">{r.playerName}</div>
+                  {r.newContractAmount && (
+                    <div className="font-mono text-[10px] text-[var(--mustard)]">
+                      ${Number(r.newContractAmount).toFixed(2)}M through {r.newContractExp}
+                      {r.contractSource && <span className="opacity-60"> · {r.contractSource}</span>}
+                    </div>
+                  )}
+                </div>
                 <span className="font-mono text-[10px] opacity-60">
                   {r.ovrAtMove} OVR · {r.ageAtMove}yo
                 </span>
@@ -499,10 +521,20 @@ export function GLeagueDesk() {
                   </span>
                   {isMine && pendingPids.gl.has(p.pid) && (
                     <span
-                      className="font-mono text-[9px] tracking-widest text-[var(--mustard)]"
-                      title="already sitting in the mod queue"
+                      className={`font-mono text-[9px] tracking-widest ${
+                        pendingPids.gl.get(p.pid)!.direction === "RELEASE"
+                          ? "text-[var(--leather)]"
+                          : "text-[var(--mustard)]"
+                      }`}
+                      title="waiting on a mod"
                     >
-                      PENDING
+                      {pendingPids.gl.get(p.pid)!.direction === "RELEASE"
+                        ? "✕ CUT PENDING"
+                        : `↑ CALL-UP PENDING${
+                            pendingPids.gl.get(p.pid)!.newContractYears
+                              ? ` ${pendingPids.gl.get(p.pid)!.newContractYears}Y`
+                              : ""
+                          }`}
                     </span>
                   )}
                   {isMine && !pendingPids.gl.has(p.pid) && (
@@ -664,9 +696,9 @@ export function GLeagueDesk() {
                     {isMine && pendingPids.down.has(c.pid) && (
                       <span
                         className="font-mono text-[9px] tracking-widest text-[var(--mustard)]"
-                        title="already sitting in the mod queue"
+                        title="waiting on a mod"
                       >
-                        PENDING
+                        ↓ SEND-DOWN PENDING
                       </span>
                     )}
                     {isMine && !pendingPids.down.has(c.pid) && (

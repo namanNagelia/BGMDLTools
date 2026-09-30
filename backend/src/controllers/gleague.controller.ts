@@ -13,7 +13,11 @@ import {
   validateProposals,
   type Proposal,
 } from "../services/gleague-board.service.js";
-import { declineMoves, listMoves, setGlLeagueLink } from "../services/gleague-season.service.js";
+import {
+  declineMoves,
+  listCommittedMoves,
+  setGlLeagueLink,
+} from "../services/gleague-season.service.js";
 import { upsertSeasonFromLink } from "../services/season.service.js";
 
 const seasonIdOf = (req: Request): number => {
@@ -97,9 +101,11 @@ export async function downloadExport(req: Request, res: Response, next: NextFunc
     // Every header must be set before the response is committed — setHeader
     // after flushHeaders throws, and by then the status is already on the wire.
     // The season row is a single cheap query, so the filename is known up front.
-    const [season, ledger] = await Promise.all([
+    // Count only what is actually in the file — pending and declined requests
+    // are in the ledger but never applied.
+    const [season, applied] = await Promise.all([
       getSeasonRow(seasonId),
-      listMoves(seasonId),
+      listCommittedMoves(seasonId),
     ]);
     if (!season) throw new LeagueFetchError("Season not found", 404);
 
@@ -110,7 +116,7 @@ export async function downloadExport(req: Request, res: Response, next: NextFunc
 
     res.setHeader("Content-Type", "application/gzip");
     res.setHeader("Content-Disposition", `attachment; filename="${name}"`);
-    res.setHeader("X-Moves-Applied", String(ledger.length));
+    res.setHeader("X-Moves-Applied", String(applied.length));
     res.flushHeaders();
 
     const gz = createGzip();
