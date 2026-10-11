@@ -167,8 +167,33 @@ export type Board = {
  */
 const boardCache = new Map<number, Board>();
 
+/**
+ * The post-replay export pair, cached alongside the board. Read-only users —
+ * building the board and validating a batch — share it, so a mod editing a
+ * call-up price in the batch is not refetching ~300MB per keystroke. Anything
+ * that mutates the pair (commit, download) loads its own fresh copy.
+ */
+const pairCache = new Map<number, LoadedPair>();
+
+/** Drop everything cached for a season. Call on every ledger write. */
 export function invalidateBoard(seasonId: number): void {
   boardCache.delete(seasonId);
+  pairCache.delete(seasonId);
+}
+
+/** Drop only the built board, keeping the export pair. */
+export function invalidateBoardOnly(seasonId: number): void {
+  boardCache.delete(seasonId);
+}
+
+async function loadPairShared(seasonId: number, opts: LoadOpts): Promise<LoadedPair> {
+  if (!opts.fresh) {
+    const hit = pairCache.get(seasonId);
+    if (hit) return hit;
+  }
+  const pair = await loadPair(seasonId, opts);
+  pairCache.set(seasonId, pair);
+  return pair;
 }
 
 export async function buildBoard(seasonId: number, opts: LoadOpts = {}): Promise<Board> {
@@ -182,7 +207,7 @@ export async function buildBoard(seasonId: number, opts: LoadOpts = {}): Promise
 }
 
 async function buildBoardUncached(seasonId: number, opts: LoadOpts = {}): Promise<Board> {
-  const { main, gl, map, ledger } = await loadPair(seasonId, opts);
+  const { main, gl, map, ledger } = await loadPairShared(seasonId, opts);
   const ctx = buildLeagueCtx(main);
   const rosters = buildAffiliateRosters(gl, map);
   const payrolls = buildMainPayrolls(main);
@@ -316,7 +341,8 @@ export async function validateProposals(
   proposals: Proposal[],
   opts: LoadOpts = {},
 ): Promise<{ staged: StagedMove[]; blocked: boolean }> {
-  const { main, gl, map } = await loadPair(seasonId, opts);
+  // Read-only, so the shared pair is safe — and it keeps re-validation instant.
+  const { main, gl, map } = await loadPairShared(seasonId, opts);
   const ctx = buildLeagueCtx(main);
   const topPids = topDraftClassPids(main.players, ctx.season, ctx.season);
   const payrolls = buildMainPayrolls(main);

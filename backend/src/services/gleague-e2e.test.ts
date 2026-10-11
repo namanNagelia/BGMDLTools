@@ -14,6 +14,7 @@ import {
   buildBoard,
   commitProposals,
   invalidateBoard,
+  invalidateBoardOnly,
   loadPair,
   validateProposals,
 } from "./gleague-board.service.js";
@@ -322,6 +323,37 @@ describe("board cache", () => {
 
     const after = await buildBoard(seasonId, counting);
     expect(after.teams.find((t) => t.glAbbrev === "BOS")!.players).toHaveLength(bosBefore + 1);
+  });
+
+  // A mod edits a call-up price and the batch re-validates on every change.
+  // That must not refetch ~300MB of BBGM each time.
+  test("validating a batch reuses the cached exports", async () => {
+    await buildBoard(seasonId, counting);
+    const after = fetches;
+    await validateProposals(seasonId, [{ direction: "ASSIGN", pid: CHEVY, glAbbrev: "BOS" }], counting);
+    await validateProposals(seasonId, [{ direction: "ASSIGN", pid: CHEVY, glAbbrev: "BOS" }], counting);
+    expect(fetches).toBe(after);
+  });
+
+  test("validating does not alter the cached exports", async () => {
+    const before = await buildBoard(seasonId, counting);
+    const n = before.teams.find((t) => t.glAbbrev === "BOS")!.players.length;
+    await validateProposals(seasonId, [{ direction: "ASSIGN", pid: CHEVY, glAbbrev: "BOS" }], counting);
+    invalidateBoardOnly(seasonId);
+    const after = await buildBoard(seasonId, counting);
+    expect(after.teams.find((t) => t.glAbbrev === "BOS")!.players).toHaveLength(n);
+  });
+
+  test("a commit drops the cached exports so the next validate sees it", async () => {
+    await buildBoard(seasonId, counting);
+    await commitProposals(seasonId, [{ direction: "ASSIGN", pid: CHEVY, glAbbrev: "BOS" }], counting);
+    const { blocked, staged } = await validateProposals(
+      seasonId,
+      [{ direction: "ASSIGN", pid: CHEVY, glAbbrev: "BOS" }],
+      counting,
+    );
+    expect(blocked).toBe(true);
+    expect(staged[0].violations.map((v) => v.code)).toContain("ALREADY_ASSIGNED");
   });
 
   test("forcing a refresh refetches even when a cached board exists", async () => {
