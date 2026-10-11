@@ -4,7 +4,9 @@ import {
   buildLeagueCtx,
   checkAffiliateRoster,
   checkAssignEligibility,
+  callUpFloorM,
   checkCallUp,
+  checkCallUpContract,
   checkRelease,
   detectForcedCallUps,
   projectRoster,
@@ -436,5 +438,157 @@ describe("projectRoster", () => {
     const out = projectRoster(roster(2, 0), { assignIn: 0, callUpOut: [0, 1], releaseOut: [] });
     expect(out).toStrictEqual([]);
     expect(checkAffiliateRoster(out).map((v) => v.code)).toContain("BELOW_MIN_ROSTER");
+  });
+});
+
+/**
+ * Mod-chosen call-up contracts.
+ *
+ * A running rookie deal is locked — he goes back on it. Any other running deal
+ * can be kept or replaced. An expired deal, or an original G-Leaguer with no
+ * main-league history, gets a new deal. A new deal is priced by the mod with the
+ * pay scale as the floor (league minimum under 55 OVR) and the league max as
+ * the ceiling.
+ */
+describe("call-up contract choice", () => {
+  const base = {
+    snapshot: { amountM: 4, exp: 2191 },
+    ovr: 59,
+    years: 2,
+    season: 2189,
+    wasRookieContract: false,
+    minContractM: 1,
+  };
+
+  describe("resolveCallUpContract", () => {
+    test("KEEP restores a running contract", () => {
+      expect(resolveCallUpContract({ ...base, choice: { mode: "KEEP" } })).toMatchObject({
+        amountM: 4,
+        exp: 2191,
+        source: "RESTORED",
+      });
+    });
+
+    test("NEW replaces a running non-rookie contract with the mod's figure", () => {
+      const r = resolveCallUpContract({
+        ...base,
+        choice: { mode: "NEW", years: 3, amountM: 9.5 },
+      });
+      expect(r).toMatchObject({ amountM: 9.5, exp: 2192, source: "PAYSCALE" });
+    });
+
+    test("a running rookie deal is restored even if NEW was asked for", () => {
+      const r = resolveCallUpContract({
+        ...base,
+        wasRookieContract: true,
+        choice: { mode: "NEW", years: 5, amountM: 20 },
+      });
+      expect(r).toMatchObject({ amountM: 4, exp: 2191, source: "RESTORED" });
+    });
+
+    test("NEW on an expired deal uses the mod's figure and years", () => {
+      const r = resolveCallUpContract({
+        ...base,
+        snapshot: { amountM: 1, exp: 2188 },
+        choice: { mode: "NEW", years: 4, amountM: 12 },
+      });
+      expect(r).toMatchObject({ amountM: 12, exp: 2193, source: "PAYSCALE" });
+    });
+
+    test("an expired rookie deal still costs RFA rights when re-priced", () => {
+      const r = resolveCallUpContract({
+        ...base,
+        snapshot: { amountM: 1, exp: 2188 },
+        wasRookieContract: true,
+        choice: { mode: "NEW", years: 2, amountM: 5 },
+      });
+      expect(r.rfaRightsLost).toBe(true);
+    });
+
+    test("no choice keeps today's defaults: restore if running, else scale minimum", () => {
+      expect(resolveCallUpContract(base).source).toBe("RESTORED");
+      expect(
+        resolveCallUpContract({ ...base, snapshot: { amountM: 1, exp: 2188 } }),
+      ).toMatchObject({ amountM: 4, source: "PAYSCALE" });
+    });
+
+    test("a sub-55 new deal is tagged MINIMUM-band but keeps the mod's figure", () => {
+      const r = resolveCallUpContract({
+        ...base,
+        ovr: 50,
+        snapshot: null,
+        choice: { mode: "NEW", years: 2, amountM: 2.5 },
+      });
+      expect(r).toMatchObject({ amountM: 2.5, source: "MINIMUM" });
+    });
+  });
+
+  describe("callUpFloorM", () => {
+    test("is the pay scale at 55+ OVR", () => {
+      expect(callUpFloorM(59, 3, 1)).toBe(7);
+      expect(callUpFloorM(65, 5, 1)).toBe(33);
+    });
+    test("is the league minimum below 55 OVR", () => {
+      expect(callUpFloorM(50, 3, 1)).toBe(1);
+    });
+  });
+
+  describe("checkCallUpContract", () => {
+    const ck = (over: Record<string, unknown>) =>
+      checkCallUpContract({ ...base, maxContractM: 33, ...over } as never).map((v) => v.code);
+
+    test("a NEW deal at the scale floor is clean", () => {
+      expect(ck({ snapshot: null, choice: { mode: "NEW", years: 3, amountM: 7 } })).toStrictEqual([]);
+    });
+
+    test("a NEW deal above the floor is clean", () => {
+      expect(ck({ snapshot: null, choice: { mode: "NEW", years: 5, amountM: 20 } })).toStrictEqual([]);
+    });
+
+    test("blocks a NEW deal below the pay scale floor", () => {
+      expect(ck({ snapshot: null, choice: { mode: "NEW", years: 3, amountM: 6.99 } })).toContain(
+        "BELOW_SCALE",
+      );
+    });
+
+    test("blocks a NEW deal above the league max", () => {
+      expect(ck({ snapshot: null, choice: { mode: "NEW", years: 5, amountM: 40 } })).toContain(
+        "ABOVE_MAX",
+      );
+    });
+
+    test("blocks re-pricing a running rookie deal", () => {
+      expect(
+        ck({ wasRookieContract: true, choice: { mode: "NEW", years: 3, amountM: 10 } }),
+      ).toContain("ROOKIE_LOCKED");
+    });
+
+    test("KEEP on a running rookie deal is fine", () => {
+      expect(ck({ wasRookieContract: true, choice: { mode: "KEEP" } })).toStrictEqual([]);
+    });
+
+    test("blocks KEEP when there is no running contract to keep", () => {
+      expect(ck({ snapshot: { amountM: 1, exp: 2188 }, choice: { mode: "KEEP" } })).toContain(
+        "NOTHING_TO_KEEP",
+      );
+      expect(ck({ snapshot: null, choice: { mode: "KEEP" } })).toContain("NOTHING_TO_KEEP");
+    });
+
+    test("blocks a contract length outside 2-5 years", () => {
+      expect(ck({ snapshot: null, choice: { mode: "NEW", years: 6, amountM: 20 } })).toContain(
+        "BAD_LENGTH",
+      );
+    });
+
+    test("every contract problem is a hard block", () => {
+      const vs = checkCallUpContract({
+        ...base,
+        maxContractM: 33,
+        snapshot: null,
+        choice: { mode: "NEW", years: 3, amountM: 1 },
+      });
+      expect(vs.length).toBeGreaterThan(0);
+      expect(vs.every((v) => v.severity === "HARD")).toBe(true);
+    });
   });
 });

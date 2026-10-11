@@ -14,7 +14,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { seasons } from "../db/schema.js";
 import { setGlLeagueLink } from "../services/gleague-season.service.js";
-import { downloadExport } from "./gleague.controller.js";
+import { downloadExport, validateBatch } from "./gleague.controller.js";
 import { errorHandler } from "../middleware/errorHandler.js";
 
 const MAIN_URL = "https://fixture.test/main.json";
@@ -30,6 +30,11 @@ const app = express();
 app.get("/export/:id/:side", (req, res, next) => {
   req.params.id = String(seasonId);
   return downloadExport(req, res, next);
+});
+app.use(express.json());
+app.post("/validate/:id", (req, res, next) => {
+  req.params.id = String(seasonId);
+  return validateBatch(req, res, next);
 });
 app.use(errorHandler);
 
@@ -83,5 +88,58 @@ describe.each(["main", "gleague"] as const)("GET /export/:id/%s", (side) => {
     const res = await request(app).get(`/export/1/${side}`);
     expect(res.headers["content-disposition"]).toMatch(/attachment; filename=".*\.json\.gz"/);
     expect(res.headers["x-moves-applied"]).toBeDefined();
+  });
+});
+
+/**
+ * The mod API is the only way moves are made now, so it has to accept all
+ * three of them and the mod's contract decision on a call-up.
+ */
+describe("POST /validate — the mod's move payloads", () => {
+  test("accepts a cut", async () => {
+    const res = await request(app)
+      .post("/validate/1")
+      .send({ moves: [{ direction: "RELEASE", glPid: 1, mainAbbrev: "NOP" }] });
+    expect(res.status).toBe(200);
+    expect(res.body.staged).toHaveLength(1);
+  });
+
+  test("accepts a call-up with a new deal", async () => {
+    const res = await request(app)
+      .post("/validate/1")
+      .send({
+        moves: [
+          {
+            direction: "CALLUP",
+            glPid: 1,
+            mainAbbrev: "NOP",
+            years: 3,
+            contract: { mode: "NEW", years: 3, amountM: 4.5 },
+          },
+        ],
+      });
+    expect(res.status).toBe(200);
+  });
+
+  test("accepts a call-up keeping the current deal", async () => {
+    const res = await request(app)
+      .post("/validate/1")
+      .send({
+        moves: [
+          { direction: "CALLUP", glPid: 1, mainAbbrev: "NOP", years: 2, contract: { mode: "KEEP" } },
+        ],
+      });
+    expect(res.status).toBe(200);
+  });
+
+  test("rejects a malformed contract", async () => {
+    const res = await request(app)
+      .post("/validate/1")
+      .send({
+        moves: [
+          { direction: "CALLUP", glPid: 1, mainAbbrev: "NOP", years: 2, contract: { mode: "NEW" } },
+        ],
+      });
+    expect(res.status).toBe(400);
   });
 });

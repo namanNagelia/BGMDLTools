@@ -45,6 +45,16 @@ export function ledgerToMoves(rows: LedgerEntry[], map: AffiliateMap): GLeagueMo
           ? { amountM: Number(row.snapContractAmount), exp: row.snapContractExp }
           : null,
       wasRookieContract: row.snapWasRookie ?? false,
+      // Apply the contract that was committed, never a fresh re-pricing.
+      fixedContract:
+        row.newContractAmount != null && row.newContractExp != null
+          ? {
+              amountM: Number(row.newContractAmount),
+              exp: row.newContractExp,
+              source: row.contractSource ?? "PAYSCALE",
+              rfaRightsLost: row.rfaRightsLost ?? false,
+            }
+          : undefined,
     });
   }
 

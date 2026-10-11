@@ -8,7 +8,7 @@
  */
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { glMoves, seasons } from "../db/schema.js";
+import { seasons } from "../db/schema.js";
 import { fetchLeagueJson, LeagueFetchError } from "./league.service.js";
 import { HARD_CAP } from "./cap.constants.js";
 import {
@@ -23,7 +23,9 @@ import {
   buildLeagueCtx,
   checkAffiliateRoster,
   checkAssignEligibility,
+  callUpFloorM,
   checkCallUp,
+  checkCallUpContract,
   checkRelease,
   detectForcedCallUps,
   projectRoster,
@@ -35,9 +37,15 @@ import {
   resolveCallUpContract,
   topDraftClassPids,
   type BbgmPlayer,
+  type ContractChoice,
   type Violation,
 } from "./gleague-rules.service.js";
-import { fromBbgmAmount, GL_MIN_ROSTER, MIN_CALLUP_OVR } from "./gleague.constants.js";
+import {
+  CALLUP_YEARS,
+  fromBbgmAmount,
+  GL_MIN_ROSTER,
+  MIN_CALLUP_OVR,
+} from "./gleague.constants.js";
 import { applyMoves, type GLeagueMove } from "./gleague-transfer.service.js";
 import { replayLedger } from "./gleague-replay.service.js";
 import {
@@ -45,12 +53,9 @@ import {
   latestAssignSnapshot,
   listCommittedMoves,
   listMoves,
-  listProposals,
-  proposeMoves,
   recordMoves,
   type GlMove,
   type LedgerEntry,
-  type Submitter,
 } from "./gleague-season.service.js";
 
 export type LoadedPair = {
@@ -140,8 +145,6 @@ export type BoardTeam = AffiliateRoster & {
 
 export type Board = {
   seasonId: number;
-  /** How many GM submissions are waiting on a mod. */
-  pendingCount: number;
   /** When this board was built — it is cached, so it can be a few minutes old. */
   builtAt: string;
   mainSeason: number;
@@ -243,7 +246,6 @@ async function buildBoardUncached(seasonId: number, opts: LoadOpts = {}): Promis
 
   return {
     seasonId,
-    pendingCount: ledger.filter((r) => r.status === "PROPOSED").length,
     builtAt: new Date().toISOString(),
     mainSeason: ctx.season,
     glSeason: gl.gameAttributes.season as number,
@@ -263,6 +265,8 @@ export type Proposal =
       glPid: number;
       mainAbbrev: string;
       years: number;
+      /** The mod's contract decision. Omitted: restore a running deal, else the scale minimum. */
+      contract?: ContractChoice;
       overrideReason?: string;
     }
   | { direction: "RELEASE"; glPid: number; mainAbbrev: string; overrideReason?: string };
@@ -285,7 +289,22 @@ export type StagedMove = {
   violations: Violation[];
   blocked: boolean;
   /** What the call-up would cost, previewed before commit. */
-  contract?: { amountM: number; exp: number; source: string; rfaRightsLost: boolean };
+  contract?: {
+    amountM: number;
+    exp: number;
+    source: "RESTORED" | "PAYSCALE" | "MINIMUM";
+    rfaRightsLost: boolean;
+  };
+  /** What a mod may choose for this call-up — drives the contract controls. */
+  contractOptions?: {
+    /** The running main-league deal he could go back on, if any. */
+    current: { amountM: number; exp: number } | null;
+    /** A running rookie deal cannot be replaced. */
+    rookieLocked: boolean;
+    /** The lowest new deal allowed at each length. */
+    floorByYears: Record<number, number>;
+    maxM: number;
+  };
 };
 
 /**
@@ -303,6 +322,7 @@ export async function validateProposals(
   const payrolls = buildMainPayrolls(main);
   const rosters = buildAffiliateRosters(gl, map);
   const minContractM = fromBbgmAmount((main.gameAttributes.minContract as number) ?? 1000);
+  const maxContractM = fromBbgmAmount((main.gameAttributes.maxContract as number) ?? 33000);
   const glSeason = gl.gameAttributes.season as number;
 
   const staged: StagedMove[] = [];
@@ -376,14 +396,20 @@ export async function validateProposals(
       continue;
     }
 
-    const contract = resolveCallUpContract({
-      snapshot: snap ? { amountM: snap.amountM, exp: snap.exp } : null,
+    const snapshot = snap ? { amountM: snap.amountM, exp: snap.exp } : null;
+    const wasRookieContract = snap?.wasRookie ?? false;
+    const running = snapshot != null && snapshot.exp >= ctx.season;
+    const contractInput = {
+      snapshot,
       ovr,
       years: proposal.years,
       season: ctx.season,
-      wasRookieContract: snap?.wasRookie ?? false,
+      wasRookieContract,
       minContractM,
-    });
+      choice: proposal.contract,
+    };
+    const contract = resolveCallUpContract(contractInput);
+    const contractViolations = checkCallUpContract({ ...contractInput, maxContractM });
 
     staged.push({
       proposal,
@@ -392,6 +418,7 @@ export async function validateProposals(
       age: playerAge(p, glSeason),
       violations: [
         ...offAffiliate,
+        ...contractViolations,
         ...checkCallUp({
           ovr,
           payrollM: payrolls.get(proposal.mainAbbrev) ?? 0,
@@ -407,6 +434,14 @@ export async function validateProposals(
         exp: contract.exp,
         source: contract.source,
         rfaRightsLost: contract.rfaRightsLost,
+      },
+      contractOptions: {
+        current: running ? snapshot : null,
+        rookieLocked: running && wasRookieContract,
+        floorByYears: Object.fromEntries(
+          CALLUP_YEARS.map((y) => [y, callUpFloorM(ovr, y, minContractM)]),
+        ),
+        maxM: maxContractM,
       },
     });
   }
@@ -513,6 +548,8 @@ export async function commitProposals(
       years: proposal.years,
       snapshot: snapshot ? { amountM: snapshot.amountM, exp: snapshot.exp } : null,
       wasRookieContract: snapshot?.wasRookie ?? false,
+      // Write exactly what the mod was shown and approved, not a re-pricing.
+      fixedContract: staged[proposals.indexOf(proposal)].contract,
     });
   }
 
@@ -581,7 +618,13 @@ async function toLedgerEntries(
       snapWasRookie: isAssign ? isRookieContract(source, ctx) : (snapshot?.wasRookie ?? false),
       newContractAmount: staged[i].contract?.amountM ?? null,
       newContractExp: staged[i].contract?.exp ?? null,
-      newContractYears: proposal.direction === "CALLUP" ? proposal.years : null,
+      // A restored deal keeps its own end date; only a new deal has a chosen length.
+      newContractYears:
+        proposal.direction !== "CALLUP" || staged[i].contract?.source === "RESTORED"
+          ? null
+          : proposal.contract?.mode === "NEW"
+            ? proposal.contract.years
+            : proposal.years,
       contractSource: (staged[i].contract?.source as LedgerEntry["contractSource"]) ?? null,
       rfaRightsLost: staged[i].contract?.rfaRightsLost ?? false,
       forced: false,
@@ -590,128 +633,4 @@ async function toLedgerEntries(
   }
 
   return entries;
-}
-
-/**
- * A GM's submission from the public page. Validated against the live exports
- * so bad moves bounce immediately, then parked at PROPOSED for a mod to review.
- */
-export async function submitProposals(
-  seasonId: number,
-  proposals: Proposal[],
-  by: Submitter,
-  opts: LoadOpts = {},
-): Promise<{ staged: StagedMove[]; submitted: GlMove[] }> {
-  const { staged, blocked } = await validateProposals(seasonId, proposals, opts);
-  if (blocked) {
-    throw new LeagueFetchError(
-      `${staged.filter((s) => s.blocked).length} move(s) break a hard rule — nothing was submitted`,
-      422,
-    );
-  }
-
-  const pair = await loadPair(seasonId, opts);
-  const entries = await toLedgerEntries(seasonId, proposals, staged, pair);
-  const submitted = await proposeMoves(seasonId, entries, by);
-  invalidateBoard(seasonId);
-  return { staged, submitted };
-}
-
-/** Pending submissions, for the public page (one team) or the mod queue (all). */
-export async function pendingRequests(
-  seasonId: number,
-  teamAbbrev?: string,
-): Promise<GlMove[]> {
-  return listProposals(seasonId, teamAbbrev);
-}
-
-/**
- * A mod approves pending submissions.
- *
- * The rules are re-checked here, not just at submission — a GM may have
- * submitted days earlier, and the board can have moved underneath them.
- */
-export async function approveMoves(
-  seasonId: number,
-  moveIds: number[],
-  opts: LoadOpts = {},
-): Promise<{ committed: GlMove[] }> {
-  if (!moveIds.length) return { committed: [] };
-
-  const pending = (await listProposals(seasonId)).filter((r) => moveIds.includes(r.id));
-  if (!pending.length) return { committed: [] };
-
-  const pair = await loadPair(seasonId, opts);
-  const proposals: Proposal[] = pending.map((r) => {
-    if (r.direction === "ASSIGN") {
-      return { direction: "ASSIGN", pid: r.mainPid!, glAbbrev: r.glTeamAbbrev };
-    }
-    if (r.direction === "RELEASE") {
-      return { direction: "RELEASE", glPid: r.glPid!, mainAbbrev: r.mainTeamAbbrev };
-    }
-    return {
-      direction: "CALLUP",
-      glPid: r.glPid!,
-      mainAbbrev: r.mainTeamAbbrev,
-      years: r.newContractYears ?? 2,
-    };
-  });
-
-  const { staged, blocked } = await validateProposals(seasonId, proposals, opts);
-  if (blocked) {
-    throw new LeagueFetchError(
-      `${staged.filter((s) => s.blocked).length} of these break a hard rule now — nothing was approved`,
-      422,
-    );
-  }
-
-  // Apply against the pair so the move's real pids and contracts are recorded.
-  const applied = applyMoves(
-    pair.main,
-    pair.gl,
-    proposals.map((p) =>
-      p.direction === "ASSIGN"
-        ? { direction: "ASSIGN" as const, pid: p.pid, glTid: pair.map.glTidByMainTid.get(
-            pair.map.pairs.find((x) => x.glAbbrev === p.glAbbrev)!.mainTid,
-          )! }
-        : p.direction === "RELEASE"
-        ? { direction: "RELEASE" as const, glPid: p.glPid }
-        : {
-            direction: "CALLUP" as const,
-            glPid: p.glPid,
-            mainTid: pair.map.pairs.find((x) => x.mainAbbrev === p.mainAbbrev)!.mainTid,
-            years: p.years,
-            snapshot: pending[proposals.indexOf(p)].snapContractAmount != null
-              ? {
-                  amountM: Number(pending[proposals.indexOf(p)].snapContractAmount),
-                  exp: pending[proposals.indexOf(p)].snapContractExp!,
-                }
-              : null,
-            wasRookieContract: pending[proposals.indexOf(p)].snapWasRookie,
-          },
-    ),
-  );
-
-  const committed: GlMove[] = [];
-  for (const [i, row] of pending.entries()) {
-    const result = applied.results[i];
-    if (result?.error) continue;
-    const [updated] = await db
-      .update(glMoves)
-      .set({
-        status: "COMMITTED",
-        mainPid: result.mainPid ?? row.mainPid,
-        glPid: result.glPid ?? row.glPid,
-        newContractAmount: result.contractAmountM != null ? result.contractAmountM.toFixed(2) : row.newContractAmount,
-        newContractExp: result.contractExp ?? row.newContractExp,
-        contractSource: result.contractSource ?? row.contractSource,
-        rfaRightsLost: result.rfaRightsLost ?? row.rfaRightsLost,
-      })
-      .where(eq(glMoves.id, row.id))
-      .returning();
-    committed.push(updated);
-  }
-
-  invalidateBoard(seasonId);
-  return { committed };
 }

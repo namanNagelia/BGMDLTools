@@ -154,3 +154,59 @@ describe("replayLedger", () => {
     expect(JSON.stringify(gl.players)).toBe(before.gl);
   });
 });
+
+/**
+ * Replay applies what the ledger recorded. A mod-priced call-up must come out
+ * of every later download at the price the mod set — recomputing it from the
+ * pay scale would quietly rewrite it to the minimum.
+ */
+describe("replay keeps the contract the mod chose", () => {
+  test("a $15M call-up is still $15M after replay", () => {
+    const { main, gl } = fresh();
+    const glBos = gl.teams.find((t) => t.abbrev === "BOS")!.tid;
+    const assigned = replayLedger(main, gl, [assignRow()]);
+    const glPid = assigned.results[0].glPid!;
+    expect(glBos).toBeGreaterThanOrEqual(0);
+
+    // Snapshot expired, so a recompute would give the scale minimum instead.
+    replayLedger(main, gl, [
+      assignRow({
+        direction: "CALLUP",
+        glPid,
+        snapContractExp: 2180,
+        newContractYears: 4,
+        newContractAmount: 15,
+        newContractExp: 2191,
+        contractSource: "PAYSCALE",
+      }),
+    ]);
+
+    expect(main.players.find((p) => p.pid === 17335)!.contract).toStrictEqual({
+      amount: 15000,
+      exp: 2191,
+    });
+  });
+
+  test("ledgerToMoves carries the stored contract onto the move", () => {
+    const { main, gl } = fresh();
+    const map = buildAffiliateMap(main, gl);
+    const [m] = ledgerToMoves(
+      [
+        assignRow({
+          direction: "CALLUP",
+          glPid: 4242,
+          newContractYears: 3,
+          newContractAmount: 9.5,
+          newContractExp: 2190,
+          contractSource: "PAYSCALE",
+          rfaRightsLost: true,
+        }),
+      ],
+      map,
+    );
+    expect(m).toMatchObject({
+      direction: "CALLUP",
+      fixedContract: { amountM: 9.5, exp: 2190, source: "PAYSCALE", rfaRightsLost: true },
+    });
+  });
+});

@@ -18,6 +18,8 @@ import {
   playerOvr,
   resolveCallUpContract,
   type BbgmPlayer,
+  type CallUpContract,
+  type ContractChoice,
 } from "./gleague-rules.service.js";
 import type { BbgmLeague } from "./gleague.service.js";
 
@@ -43,6 +45,13 @@ export type CallUpMove = {
   enforcePayScale?: boolean;
   /** Test/override hook for the OVR the pay scale is read at. */
   ovrOverride?: number;
+  /** The mod's contract decision. */
+  choice?: ContractChoice;
+  /**
+   * A contract already decided and recorded in the ledger. Replay passes this
+   * so a download reproduces exactly what was committed instead of re-pricing.
+   */
+  fixedContract?: CallUpContract;
 };
 
 export type ReleaseMove = {
@@ -182,16 +191,19 @@ function applyCallUp(main: BbgmLeague, gl: BbgmLeague, move: CallUpMove): MoveRe
     };
   }
 
-  let contract;
+  let contract: CallUpContract;
   try {
-    contract = resolveCallUpContract({
-      snapshot: move.snapshot,
-      ovr,
-      years: move.years,
-      season: mainSeason,
-      wasRookieContract: move.wasRookieContract,
-      minContractM: fromBbgmAmount((main.gameAttributes.minContract as number) ?? 1000),
-    });
+    contract =
+      move.fixedContract ??
+      resolveCallUpContract({
+        snapshot: move.snapshot,
+        ovr,
+        years: move.years,
+        season: mainSeason,
+        wasRookieContract: move.wasRookieContract,
+        minContractM: fromBbgmAmount((main.gameAttributes.minContract as number) ?? 1000),
+        choice: move.choice,
+      });
   } catch (err) {
     return { direction: "CALLUP", playerName: name, error: (err as Error).message };
   }

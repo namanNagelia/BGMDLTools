@@ -11,15 +11,13 @@ import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { glMoves, glTeams, seasons } from "../db/schema.js";
 import {
-  approveMoves,
   buildBoard,
   commitProposals,
   invalidateBoard,
   loadPair,
-  submitProposals,
   validateProposals,
 } from "./gleague-board.service.js";
-import { declineMoves, proposeMoves, setGlLeagueLink } from "./gleague-season.service.js";
+import { recordMoves, setGlLeagueLink } from "./gleague-season.service.js";
 import { BBGM_TID } from "./gleague.constants.js";
 
 const MAIN_URL = "https://fixture.test/main.json";
@@ -251,83 +249,34 @@ describe("commit and replay", () => {
 });
 
 /**
- * The gate that matters: a GM's submission is a request, not a move. Until a
- * mod approves it, it must be invisible to the exports.
+ * GMs no longer submit requests, but the 2189 ledger still holds some from
+ * before the change. A row that is not COMMITTED must never reach an export.
  */
-describe("pending submissions never reach an export", () => {
-  const waters = () => ({
-    direction: "ASSIGN" as const,
-    playerKey: "j.d. waters|2163",
-    playerName: "J.D. Waters",
-    bornYear: 2163,
-    mainPid: 17337,
-    glPid: null,
-    mainTeamAbbrev: "NOP",
-    glTeamAbbrev: "NOP",
-    ovrAtMove: 45,
-    ageAtMove: 24,
-    snapContractAmount: 1,
-    snapContractExp: 2189,
-    snapWasRookie: false,
-  });
-
-  test("a proposed assignment leaves both exports untouched", async () => {
-    await proposeMoves(seasonId, [waters()], { gm: "Naman", teamAbbrev: "NOP" });
+describe("leftover pending rows never reach an export", () => {
+  test("a PROPOSED assignment leaves both exports untouched", async () => {
+    const [r] = await recordMoves(seasonId, [
+      {
+        direction: "ASSIGN",
+        playerKey: "j.d. waters|2163",
+        playerName: "J.D. Waters",
+        bornYear: 2163,
+        mainPid: 17337,
+        mainTeamAbbrev: "NOP",
+        glTeamAbbrev: "NOP",
+        ovrAtMove: 45,
+        ageAtMove: 24,
+        snapContractAmount: 1,
+        snapContractExp: 2189,
+      },
+    ]);
+    await db.update(glMoves).set({ status: "PROPOSED" }).where(eq(glMoves.id, r.id));
+    invalidateBoard(seasonId);
 
     const { main, gl } = await loadPair(seasonId, opts);
-    const p = main.players.find((x) => x.pid === 17337)!;
-
-    expect(p.tid).toBeGreaterThanOrEqual(0); // still on his main roster
-    expect(gl.players.some((x) => `${x.firstName} ${x.lastName}` === "J.D. Waters" && x.tid >= 0)).toBe(false);
-  });
-
-  test("a proposed assignment does not change the board", async () => {
-    const before = await buildBoard(seasonId, opts);
-    await proposeMoves(seasonId, [waters()], { gm: "Naman", teamAbbrev: "NOP" });
-    const after = await buildBoard(seasonId, opts);
-
-    const nopBefore = before.teams.find((t) => t.glAbbrev === "NOP")!;
-    const nopAfter = after.teams.find((t) => t.glAbbrev === "NOP")!;
-    expect(nopAfter.players).toHaveLength(nopBefore.players.length);
-  });
-
-  test("a declined submission never applies", async () => {
-    const [p] = await proposeMoves(seasonId, [waters()], { gm: "Naman", teamAbbrev: "NOP" });
-    await declineMoves(seasonId, [p.id]);
-
-    const { main } = await loadPair(seasonId, opts);
     expect(main.players.find((x) => x.pid === 17337)!.tid).toBeGreaterThanOrEqual(0);
-  });
-
-  test("approving it applies the move to both exports", async () => {
-    const [p] = await proposeMoves(seasonId, [waters()], { gm: "Naman", teamAbbrev: "NOP" });
-    const res = await approveMoves(seasonId, [p.id], opts);
-
-    expect(res.committed).toHaveLength(1);
-    expect(res.committed[0].status).toBe("COMMITTED");
-
-    const { main, gl } = await loadPair(seasonId, opts);
-    expect(main.players.find((x) => x.pid === 17337)!.tid).toBe(BBGM_TID.INACTIVE);
-    expect(gl.players.some((x) => `${x.firstName} ${x.lastName}` === "J.D. Waters" && x.tid >= 0)).toBe(true);
-  });
-
-  test("approving records the pids the move actually produced", async () => {
-    const [p] = await proposeMoves(seasonId, [waters()], { gm: "Naman", teamAbbrev: "NOP" });
-    const res = await approveMoves(seasonId, [p.id], opts);
-
-    expect(res.committed[0].glPid).not.toBeNull();
-    expect(res.committed[0].mainPid).toBe(17337);
-  });
-
-  test("refuses to approve a move that now breaks a hard rule", async () => {
-    // Tyrell Ard is 60 OVR — a GM could submit before a progression, or a mod
-    // could approve late. Either way the rules are checked again at approval.
-    const [p] = await proposeMoves(
-      seasonId,
-      [{ ...waters(), playerKey: "tyrell ard|2163", playerName: "Tyrell Ard", mainPid: 17267, mainTeamAbbrev: "LAL", glTeamAbbrev: "LAL", ovrAtMove: 60 }],
-      { gm: "Someone", teamAbbrev: "LAL" },
-    );
-    await expect(approveMoves(seasonId, [p.id], opts)).rejects.toThrow(/hard rule/i);
+    expect(
+      gl.players.some((x) => `${x.firstName} ${x.lastName}` === "J.D. Waters" && x.tid >= 0),
+    ).toBe(false);
   });
 });
 
@@ -373,18 +322,6 @@ describe("board cache", () => {
 
     const after = await buildBoard(seasonId, counting);
     expect(after.teams.find((t) => t.glAbbrev === "BOS")!.players).toHaveLength(bosBefore + 1);
-  });
-
-  test("a GM's submission invalidates it too, so the pending count is current", async () => {
-    await buildBoard(seasonId, counting);
-    await submitProposals(
-      seasonId,
-      [{ direction: "ASSIGN", pid: CHEVY, glAbbrev: "BOS" }],
-      { gm: "Naman", teamAbbrev: "BOS" },
-      counting,
-    );
-    const after = await buildBoard(seasonId, counting);
-    expect(after.pendingCount).toBe(1);
   });
 
   test("forcing a refresh refetches even when a cached board exists", async () => {
@@ -464,5 +401,123 @@ describe("duplicate moves are rejected up front", () => {
       opts,
     );
     expect(blocked).toBe(true);
+  });
+});
+
+/**
+ * Mod-priced call-ups, end to end: the mod's figure is validated against the
+ * pay scale, committed, and comes out of the downloaded export unchanged.
+ */
+describe("call-up contract set by the mod", () => {
+  const tyPid = async () => {
+    const board = await buildBoard(seasonId, opts);
+    return board.teams.find((t) => t.glAbbrev === "NOP")!.players.find((p) => p.name === "Ty Christiansen")!.pid;
+  };
+
+  test("preview tells the mod what he can choose: floor per length, max, no deal to keep", async () => {
+    const glPid = await tyPid();
+    const { staged } = await validateProposals(
+      seasonId,
+      [{ direction: "CALLUP", glPid, mainAbbrev: "NOP", years: 2 }],
+      opts,
+    );
+    const o = staged[0].contractOptions!;
+    expect(o.current).toBeNull();
+    expect(o.rookieLocked).toBe(false);
+    expect(o.maxM).toBe(33);
+    // Ty is 51 OVR — under the scale, so every length floors at the $1M minimum.
+    expect(o.floorByYears).toStrictEqual({ 2: 1, 3: 1, 4: 1, 5: 1 });
+  });
+
+  test("a deal above the floor commits at the mod's figure and reaches the export", async () => {
+    const glPid = await tyPid();
+    const { committed } = await commitProposals(
+      seasonId,
+      [
+        {
+          direction: "CALLUP",
+          glPid,
+          mainAbbrev: "NOP",
+          years: 3,
+          contract: { mode: "NEW", years: 3, amountM: 4.5 },
+        },
+      ],
+      opts,
+    );
+    expect(Number(committed[0].newContractAmount)).toBe(4.5);
+    expect(committed[0].newContractYears).toBe(3);
+
+    const { main } = await loadPair(seasonId, opts);
+    const ty = main.players.find((p) => `${p.firstName} ${p.lastName}` === "Ty Christiansen" && p.tid >= 0)!;
+    expect(ty.contract).toStrictEqual({ amount: 4500, exp: 2190 });
+  });
+
+  test("blocks a deal under the floor", async () => {
+    const glPid = await tyPid();
+    const { blocked, staged } = await validateProposals(
+      seasonId,
+      [{ direction: "CALLUP", glPid, mainAbbrev: "NOP", years: 2, contract: { mode: "NEW", years: 2, amountM: 0.5 } }],
+      opts,
+    );
+    expect(blocked).toBe(true);
+    expect(staged[0].violations.map((v) => v.code)).toContain("BELOW_SCALE");
+  });
+
+  test("blocks a deal over the max", async () => {
+    const glPid = await tyPid();
+    const { staged } = await validateProposals(
+      seasonId,
+      [{ direction: "CALLUP", glPid, mainAbbrev: "NOP", years: 5, contract: { mode: "NEW", years: 5, amountM: 40 } }],
+      opts,
+    );
+    expect(staged[0].violations.map((v) => v.code)).toContain("ABOVE_MAX");
+  });
+
+  // David Leary: $7.04M rookie deal through 2190, assignable via the waiver.
+  test("a running rookie deal is locked — NEW is refused, KEEP restores it", async () => {
+    const board = await buildBoard(seasonId, opts);
+    const leary = board.teams.find((t) => t.mainAbbrev === "NOP")!.candidates.find((c) => c.name === "David Leary")!;
+    await commitProposals(seasonId, [{ direction: "ASSIGN", pid: leary.pid, glAbbrev: "NOP" }], opts);
+
+    const after = await buildBoard(seasonId, opts);
+    const glPid = after.teams.find((t) => t.glAbbrev === "NOP")!.players.find((p) => p.name === "David Leary")!.pid;
+
+    const tryNew = await validateProposals(
+      seasonId,
+      [{ direction: "CALLUP", glPid, mainAbbrev: "NOP", years: 3, contract: { mode: "NEW", years: 3, amountM: 12 } }],
+      opts,
+    );
+    expect(tryNew.staged[0].violations.map((v) => v.code)).toContain("ROOKIE_LOCKED");
+    expect(tryNew.staged[0].contractOptions!.rookieLocked).toBe(true);
+
+    const { committed } = await commitProposals(
+      seasonId,
+      [{ direction: "CALLUP", glPid, mainAbbrev: "NOP", years: 2, contract: { mode: "KEEP" } }],
+      opts,
+    );
+    expect(committed[0].contractSource).toBe("RESTORED");
+    expect(Number(committed[0].newContractAmount)).toBe(7.04);
+  });
+
+  test("a running non-rookie deal can be replaced", async () => {
+    await commitProposals(seasonId, [{ direction: "ASSIGN", pid: CHEVY, glAbbrev: "BOS" }], opts);
+    const board = await buildBoard(seasonId, opts);
+    const glPid = board.teams.find((t) => t.glAbbrev === "BOS")!.players.find((p) => p.name === "Chevy Smith")!.pid;
+
+    const { staged } = await validateProposals(
+      seasonId,
+      [{ direction: "CALLUP", glPid, mainAbbrev: "BOS", years: 2 }],
+      opts,
+    );
+    expect(staged[0].contractOptions!.current).toStrictEqual({ amountM: 1, exp: 2191 });
+
+    const { committed } = await commitProposals(
+      seasonId,
+      [{ direction: "CALLUP", glPid, mainAbbrev: "BOS", years: 4, contract: { mode: "NEW", years: 4, amountM: 3 } }],
+      opts,
+    );
+    expect(Number(committed[0].newContractAmount)).toBe(3);
+    const { main } = await loadPair(seasonId, opts);
+    expect(main.players.find((p) => p.pid === CHEVY)!.contract).toStrictEqual({ amount: 3000, exp: 2191 });
   });
 });

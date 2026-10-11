@@ -5,6 +5,7 @@
  * Money is $M at this layer; BBGM's thousands are converted at the boundary.
  */
 import {
+  CALLUP_YEARS,
   callUpMinimumM,
   fromBbgmAmount,
   GL_HOARD_LIMIT,
@@ -173,6 +174,14 @@ export function checkAffiliateRoster(roster: Array<{ assigned: boolean }>): Viol
   return out;
 }
 
+/**
+ * What the mod decided for a call-up. KEEP returns him to the main-league
+ * contract he went down on; NEW is a fresh deal the mod prices.
+ */
+export type ContractChoice =
+  | { mode: "KEEP" }
+  | { mode: "NEW"; years: number; amountM: number };
+
 export type CallUpContractInput = {
   /** The player's main-league contract as captured at assignment, if any. */
   snapshot: { amountM: number; exp: number } | null;
@@ -186,6 +195,8 @@ export type CallUpContractInput = {
    * pay scale has no entry for him.
    */
   minContractM?: number;
+  /** The mod's decision. Omitted: restore a running deal, else the scale minimum. */
+  choice?: ContractChoice;
 };
 
 export type CallUpContract = {
@@ -202,30 +213,95 @@ export type CallUpContract = {
  * off the call-up pay scale, and an expired *rookie* deal costs RFA rights.
  */
 export function resolveCallUpContract(input: CallUpContractInput): CallUpContract {
-  const { snapshot, ovr, years, season, wasRookieContract, minContractM } = input;
+  const { snapshot, ovr, years, season, wasRookieContract, minContractM, choice } = input;
   const stillRunning = snapshot != null && snapshot.exp >= season;
 
-  if (stillRunning) {
+  // A running rookie deal is locked; any other running deal is kept unless
+  // the mod chose to replace it.
+  const keep = stillRunning && (wasRookieContract || choice?.mode !== "NEW");
+  if (keep) {
     return {
-      amountM: snapshot.amountM,
-      exp: snapshot.exp,
+      amountM: snapshot!.amountM,
+      exp: snapshot!.exp,
       source: "RESTORED",
       rfaRightsLost: false,
     };
   }
 
   const belowScale = ovr < MIN_CALLUP_OVR;
-  if (belowScale && minContractM == null) {
+  const newYears = choice?.mode === "NEW" ? choice.years : years;
+  if (belowScale && minContractM == null && choice?.mode !== "NEW") {
     // No scale entry and no minimum to fall back on — the caller has to decide.
-    callUpMinimumM(ovr, years);
+    callUpMinimumM(ovr, newYears);
   }
 
+  const amountM =
+    choice?.mode === "NEW"
+      ? choice.amountM
+      : belowScale
+        ? minContractM!
+        : callUpMinimumM(ovr, newYears);
+
   return {
-    amountM: belowScale ? minContractM! : callUpMinimumM(ovr, years),
-    exp: season + years,
+    amountM,
+    exp: season + newYears,
     source: belowScale ? "MINIMUM" : "PAYSCALE",
-    rfaRightsLost: wasRookieContract,
+    // Replacing a still-running non-rookie deal costs nothing; a rookie deal
+    // that lapsed while he was down costs his RFA rights.
+    rfaRightsLost: !stillRunning && wasRookieContract,
   };
+}
+
+/** The lowest a new call-up deal may pay: the pay scale, or the league minimum under 55 OVR. */
+export function callUpFloorM(ovr: number, years: number, minContractM: number): number {
+  return ovr < MIN_CALLUP_OVR ? minContractM : callUpMinimumM(ovr, years);
+}
+
+export type CallUpContractCheck = CallUpContractInput & {
+  minContractM: number;
+  maxContractM: number;
+};
+
+/** Hard checks on the mod's contract decision for a call-up. */
+export function checkCallUpContract(input: CallUpContractCheck): Violation[] {
+  const { snapshot, season, wasRookieContract, ovr, choice, minContractM, maxContractM } = input;
+  const out: Violation[] = [];
+  const stillRunning = snapshot != null && snapshot.exp >= season;
+  if (!choice) return out;
+
+  if (choice.mode === "KEEP") {
+    if (!stillRunning) {
+      out.push(hard("NOTHING_TO_KEEP", "no running main-league contract to keep — set a new deal"));
+    }
+    return out;
+  }
+
+  if (stillRunning && wasRookieContract) {
+    out.push(
+      hard("ROOKIE_LOCKED", `still on his rookie deal through ${snapshot!.exp} — he returns on it`),
+    );
+    return out;
+  }
+  if (!(CALLUP_YEARS as readonly number[]).includes(choice.years)) {
+    out.push(hard("BAD_LENGTH", `${choice.years}y — a call-up deal is 2 to 5 years`));
+    return out;
+  }
+
+  const floor = callUpFloorM(ovr, choice.years, minContractM);
+  if (choice.amountM < floor) {
+    out.push(
+      hard(
+        "BELOW_SCALE",
+        `$${choice.amountM.toFixed(2)}M is under the ${ovr} OVR / ${choice.years}Y floor of $${floor.toFixed(2)}M`,
+      ),
+    );
+  }
+  if (choice.amountM > maxContractM) {
+    out.push(
+      hard("ABOVE_MAX", `$${choice.amountM.toFixed(2)}M is over the $${maxContractM}M max contract`),
+    );
+  }
+  return out;
 }
 
 export type CallUpCheckInput = {

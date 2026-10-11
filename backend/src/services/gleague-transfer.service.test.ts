@@ -424,3 +424,60 @@ describe("applyMoves — never duplicates a player", () => {
     expect(gl.players.filter((p) => nameOf(p) === "Chevy Smith" && p.tid >= 0)).toHaveLength(1);
   });
 });
+
+describe("applyMoves — contract decided by the mod", () => {
+  const assignChevy = () =>
+    applyMoves(main, gl, [{ direction: "ASSIGN", pid: CHEVY, glTid: tidOf(gl, "BOS") }]).results[0]
+      .glPid!;
+
+  test("a NEW deal is written at the mod's figure", () => {
+    const glPid = assignChevy();
+    const res = applyMoves(main, gl, [
+      {
+        direction: "CALLUP",
+        glPid,
+        mainTid: tidOf(main, "BOS"),
+        years: 2,
+        snapshot: { amountM: 1, exp: 2191 },
+        wasRookieContract: false,
+        choice: { mode: "NEW", years: 3, amountM: 6.5 },
+      },
+    ]);
+    // Chevy is 52 OVR, so the deal is in the sub-55 band, priced by the mod.
+    expect(res.results[0]).toMatchObject({ contractAmountM: 6.5, contractSource: "MINIMUM" });
+    expect(mainPid(CHEVY).contract).toStrictEqual({ amount: 6500, exp: 2190 });
+  });
+
+  test("KEEP returns him on his old deal", () => {
+    const glPid = assignChevy();
+    applyMoves(main, gl, [
+      {
+        direction: "CALLUP",
+        glPid,
+        mainTid: tidOf(main, "BOS"),
+        years: 2,
+        snapshot: { amountM: 1, exp: 2191 },
+        wasRookieContract: false,
+        choice: { mode: "KEEP" },
+      },
+    ]);
+    expect(mainPid(CHEVY).contract).toStrictEqual({ amount: 1000, exp: 2191 });
+  });
+
+  test("a fixed contract from the ledger is applied verbatim", () => {
+    const glPid = assignChevy();
+    const res = applyMoves(main, gl, [
+      {
+        direction: "CALLUP",
+        glPid,
+        mainTid: tidOf(main, "BOS"),
+        years: 2,
+        snapshot: null,
+        wasRookieContract: false,
+        fixedContract: { amountM: 11.25, exp: 2192, source: "PAYSCALE", rfaRightsLost: false },
+      },
+    ]);
+    expect(res.results[0].contractAmountM).toBe(11.25);
+    expect(mainPid(CHEVY).contract).toStrictEqual({ amount: 11250, exp: 2192 });
+  });
+});

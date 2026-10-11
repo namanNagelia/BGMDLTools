@@ -7,7 +7,7 @@
  * back", so we record it here at the moment of assignment and read it back on
  * call-up.
  */
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { glMoves, glTeams, seasons } from "../db/schema.js";
 
@@ -188,80 +188,4 @@ export async function listCommittedMoves(seasonId: number): Promise<GlMove[]> {
     .from(glMoves)
     .where(and(eq(glMoves.seasonId, seasonId), eq(glMoves.status, "COMMITTED")))
     .orderBy(glMoves.id);
-}
-
-export type Submitter = { gm: string; teamAbbrev: string };
-
-/** Store a GM's submission as pending. Nothing reaches an export until approval. */
-export async function proposeMoves(
-  seasonId: number,
-  entries: LedgerEntry[],
-  by: Submitter,
-): Promise<GlMove[]> {
-  if (!entries.length) return [];
-  return db
-    .insert(glMoves)
-    .values(
-      entries.map((e) => ({
-        ...toRow(seasonId, e),
-        status: "PROPOSED" as const,
-        submittedByGm: by.gm,
-      })),
-    )
-    .returning();
-}
-
-/** Pending submissions — for one team, or all of them when abbrev is omitted. */
-export async function listProposals(
-  seasonId: number,
-  teamAbbrev?: string,
-): Promise<GlMove[]> {
-  const where = teamAbbrev
-    ? and(
-        eq(glMoves.seasonId, seasonId),
-        eq(glMoves.status, "PROPOSED"),
-        eq(glMoves.mainTeamAbbrev, teamAbbrev),
-      )
-    : and(eq(glMoves.seasonId, seasonId), eq(glMoves.status, "PROPOSED"));
-
-  return db.select().from(glMoves).where(where).orderBy(glMoves.id);
-}
-
-/**
- * A GM pulls back their own pending submission. Scoped to the team so one
- * GM cannot withdraw another's, and refuses once a mod has approved it.
- */
-export async function withdrawProposal(
-  seasonId: number,
-  moveId: number,
-  teamAbbrev: string,
-): Promise<boolean> {
-  const rows = await db
-    .delete(glMoves)
-    .where(
-      and(
-        eq(glMoves.seasonId, seasonId),
-        eq(glMoves.id, moveId),
-        eq(glMoves.status, "PROPOSED"),
-        eq(glMoves.mainTeamAbbrev, teamAbbrev),
-      ),
-    )
-    .returning({ id: glMoves.id });
-  return rows.length > 0;
-}
-
-/** Reject pending submissions. They stay on the record but never apply. */
-export async function declineMoves(seasonId: number, moveIds: number[]): Promise<GlMove[]> {
-  if (!moveIds.length) return [];
-  return db
-    .update(glMoves)
-    .set({ status: "DECLINED" })
-    .where(
-      and(
-        eq(glMoves.seasonId, seasonId),
-        eq(glMoves.status, "PROPOSED"),
-        inArray(glMoves.id, moveIds),
-      ),
-    )
-    .returning();
 }
