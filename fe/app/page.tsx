@@ -13,12 +13,6 @@ export default function Home() {
           >
             MOD ENTRY →
           </Link>
-          <Link
-            href="/gleague"
-            className="eyebrow inline-flex items-baseline gap-2 underline decoration-[var(--leather)] decoration-2 underline-offset-4 hover:text-[var(--leather)] transition-colors"
-          >
-            G-LEAGUE DESK →
-          </Link>
         </div>
         <div className="seam mt-3" />
       </header>
