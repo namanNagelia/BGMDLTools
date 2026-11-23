@@ -231,7 +231,7 @@ interface TeamPayroll {
 }
 
 /** Build per-team rosters + payrolls from BBGM. Contract amount converted thousands → millions. */
-function buildTeamPayrolls(bbgm: unknown, seasonNumber: number): TeamPayroll[] {
+export function buildTeamPayrolls(bbgm: unknown, seasonNumber: number): TeamPayroll[] {
   if (!bbgm || typeof bbgm !== "object") return [];
   const d = bbgm as { teams?: unknown; players?: unknown };
   if (!Array.isArray(d.teams) || !Array.isArray(d.players)) return [];
@@ -250,6 +250,7 @@ function buildTeamPayrolls(bbgm: unknown, seasonNumber: number): TeamPayroll[] {
     lastName?: string;
     born?: { year?: number };
     contract?: { amount?: number; exp?: number };
+    contracts?: Array<{ start: number; amounts: number[] }>;
     ratings?: Array<{ season?: number; pos?: string; ovr?: number }>;
   }>;
 
@@ -273,7 +274,10 @@ function buildTeamPayrolls(bbgm: unknown, seasonNumber: number): TeamPayroll[] {
     }
 
     const age = p.born?.year ? seasonNumber - p.born.year : null;
-    const amt = p.contract?.amount ?? 0;
+    // BBGM export v75 replaced `contract` with a `contracts` history; the last entry is the current deal.
+    const last = p.contracts?.at(-1);
+    const amt = p.contract?.amount ?? last?.amounts[0] ?? 0;
+    const exp = p.contract?.exp ?? (last ? last.start + last.amounts.length - 1 : null);
 
     list.push({
       pid: p.pid ?? -1,
@@ -282,7 +286,7 @@ function buildTeamPayrolls(bbgm: unknown, seasonNumber: number): TeamPayroll[] {
       age,
       ovr,
       contractAmount: amt / 1000,
-      contractExp: p.contract?.exp ?? null,
+      contractExp: exp,
     });
     rosterByTid.set(p.tid, list);
   }
