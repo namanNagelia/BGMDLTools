@@ -115,7 +115,13 @@ export function OffersInbox() {
   const pending = rows.filter((r) => r.status === "PENDING");
   const signed = rows.filter((r) => r.status === "ACCEPTED");
   const flagged = pending.filter((r) => r.invalidReasons.length > 0);
-  const activeRows = view === "PENDING" ? pending : signed;
+  // A signing flips the losing offers to REJECTED; the SIGNED view keeps them
+  // so mods can still see who else bid on a player.
+  const signedFaIds = new Set(signed.map((r) => r.freeAgentId));
+  const activeRows =
+    view === "PENDING"
+      ? pending
+      : rows.filter((r) => signedFaIds.has(r.freeAgentId));
 
   const byPlayer = new Map<number, OfferWithFlags[]>();
   for (const r of activeRows) {
@@ -267,6 +273,7 @@ export function OffersInbox() {
           {groups.map(([faId, faOffers]) => {
             const name = faOffers[0].playerName ?? `#${faId}`;
             const prev = faOffers[0].playerPreviousTeam;
+            const offerCount = faOffers.filter((o) => o.status !== "WITHDRAWN").length;
             return (
               <div key={faId} className="border rule">
                 <div className="border-b rule px-3 py-2 bg-[color:var(--ink-2)] flex items-baseline justify-between flex-wrap gap-2">
@@ -296,8 +303,8 @@ export function OffersInbox() {
                       <span className="spinner" />
                     )}
                     <span className="opacity-60 text-[10px] tracking-widest">
-                      · {faOffers.length} OFFER
-                      {faOffers.length === 1 ? "" : "S"}
+                      · {offerCount} OFFER
+                      {offerCount === 1 ? "" : "S"}
                     </span>
                   </div>
                   {view === "PENDING" ? (
@@ -328,16 +335,23 @@ export function OffersInbox() {
                   <tbody>
                     {faOffers
                       .slice()
-                      .sort((a, b) => Number(b.offerAmount) - Number(a.offerAmount))
+                      .sort(
+                        (a, b) =>
+                          Number(b.status === "ACCEPTED") - Number(a.status === "ACCEPTED") ||
+                          Number(b.offerAmount) - Number(a.offerAmount),
+                      )
                       .map((o) => {
                         const total = Number(o.offerAmount) * o.offerLength;
-                        const flagged = o.invalidReasons.length > 0;
+                        // Flags are computed against today's cap sheet, which
+                        // means nothing for an offer that lost or was pulled.
+                        const lost = o.status === "REJECTED" || o.status === "WITHDRAWN";
+                        const flagged = !lost && o.invalidReasons.length > 0;
                         return (
                           <tr
                             key={o.id}
                             className={`border-b rule last:border-b-0 ${
                               flagged ? "bg-[color:rgba(217,166,55,0.10)]" : ""
-                            }`}
+                            } ${lost ? "opacity-50" : ""}`}
                           >
                             <td className="px-3 py-1.5 font-bold whitespace-nowrap">
                               {o.teamAbbrev}
@@ -387,14 +401,22 @@ export function OffersInbox() {
                                   ))}
                                 </ul>
                               ) : (
-                                <span className="text-[10px] tracking-widest opacity-50">OK</span>
+                                <span className="text-[10px] tracking-widest opacity-50">
+                                  {lost ? "—" : "OK"}
+                                </span>
                               )}
                             </td>
                             <td className="px-3 py-1.5 text-right whitespace-nowrap">
                               {view === "SIGNED" ? (
-                                <span className="font-mono text-[10px] tracking-widest text-[var(--leather)]">
-                                  ✓
-                                </span>
+                                o.status === "ACCEPTED" ? (
+                                  <span className="font-mono text-[10px] tracking-widest text-[var(--leather)]">
+                                    ✓ SIGNED
+                                  </span>
+                                ) : (
+                                  <span className="font-mono text-[10px] tracking-widest">
+                                    {o.status}
+                                  </span>
+                                )
                               ) : confirmId === o.id ? (
                                 <span className="inline-flex gap-1">
                                   <button
