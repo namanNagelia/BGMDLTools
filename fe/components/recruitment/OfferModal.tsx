@@ -7,11 +7,13 @@ import { OfferForm } from "./OfferForm";
 interface Props {
   fa: FreeAgent;
   teamAbbrev: string;
+  /** Soft-cap room before this offer, $M. */
+  capSpace: number;
   onClose: () => void;
   onSubmitted: (codeWord: string) => void;
 }
 
-export function OfferModal({ fa, teamAbbrev, onClose, onSubmitted }: Props) {
+export function OfferModal({ fa, teamAbbrev, capSpace, onClose, onSubmitted }: Props) {
   // ESC closes
   useEffect(() => {
     function handler(e: KeyboardEvent) {
@@ -105,6 +107,7 @@ export function OfferModal({ fa, teamAbbrev, onClose, onSubmitted }: Props) {
             faName={fa.name}
             faOverall={fa.overall}
             teamAbbrev={teamAbbrev}
+            capSpace={capSpace}
             onSubmitted={onSubmitted}
           />
         </div>

@@ -45,6 +45,15 @@ function fmt(n: number, suffix = "M"): string {
   return `${n >= 0 ? "" : "−"}$${Math.abs(n).toFixed(2)}${suffix}`;
 }
 
+/** Soft-cap room: payroll + active cap holds (renounced and signed FAs don't count). */
+export function softCapRoom(team: TeamRow | undefined, ownFAs: FreeAgent[]): number {
+  const salary = team ? Number(team.totalSalary) : 0;
+  const holds = ownFAs
+    .filter((f) => !f.renounced && f.faStatus !== "SIGNED")
+    .reduce((s, f) => s + Number(f.capHold || 0), 0);
+  return SOFT_CAP - salary - holds;
+}
+
 export function TeamCard({
   abbrev,
   ranks,
@@ -84,7 +93,7 @@ export function TeamCard({
     0,
   );
   const committed = salary + capHolds;
-  const softRoom = SOFT_CAP - committed;
+  const softRoom = softCapRoom(team, ownFAs);
   const hardRoom = HARD_CAP - committed;
   const overSoft = softRoom < 0;
   const overHard = hardRoom < 0;

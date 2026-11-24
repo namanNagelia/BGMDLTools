@@ -10,7 +10,7 @@ import {
   type Season,
   type TeamRow,
 } from "@/lib/api";
-import { TeamCard } from "./TeamCard";
+import { TeamCard, softCapRoom } from "./TeamCard";
 import { OfferModal } from "./OfferModal";
 import { HowToPanel } from "../HowToPanel";
 import { MyOffersPanel } from "./MyOffersPanel";
@@ -762,6 +762,10 @@ export function RecruitmentBoard() {
         <OfferModal
           fa={offerFor}
           teamAbbrev={gmTeam}
+          capSpace={softCapRoom(
+            data.teams[gmTeam],
+            data.freeAgents.filter((f) => f.previousTeam === gmTeam),
+          )}
           onClose={() => setOfferFor(null)}
           onSubmitted={(codeWord) => {
             // refresh the key-gated book so the AFTER SIGNINGS card reflects

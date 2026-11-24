@@ -8,6 +8,8 @@ interface Props {
   faName: string;
   faOverall: number;
   teamAbbrev: string;
+  /** Soft-cap room before this offer, $M. */
+  capSpace: number;
   /** Passed the key used, so the caller can unlock the team's pending book. */
   onSubmitted?: (codeWord: string) => void;
 }
@@ -35,15 +37,26 @@ function ovrBand(ovr: number): string {
   return "≤56";
 }
 
+/** Mirrors backend MAX_SALARY in offer.service.ts. */
+const MAX_SALARY = 33;
+
 export function OfferForm({
   faId,
   faName,
   faOverall,
   teamAbbrev,
+  capSpace,
   onSubmitted,
 }: Props) {
-  const [amount, setAmount] = useState("");
-  const [years, setYears] = useState("");
+  const bandForFA = ovrBand(faOverall);
+  const minAmount = String(PAYSCALE.find((r) => r.ovr === bandForFA)!.min);
+  // offer all remaining soft-cap room, only when it's a legal non-max amount
+  const capFill =
+    capSpace >= Number(minAmount) && capSpace < MAX_SALARY
+      ? String(Math.floor(capSpace * 100) / 100)
+      : null;
+  const [amount, setAmount] = useState(minAmount);
+  const [years, setYears] = useState("1");
   const [gm, setGm] = useState("");
   const [codeWord, setCodeWord] = useState("");
   const [useMLE, setUseMLE] = useState(false);
@@ -151,8 +164,8 @@ export function OfferForm({
         if (codeWord.trim())
           window.localStorage.setItem("gmCodeWord", codeWord.trim());
       }
-      setAmount("");
-      setYears("");
+      setAmount(minAmount);
+      setYears("1");
       setUseMLE(false);
       setTierTouched(false);
       setUseDoubleDip(false);
@@ -174,7 +187,6 @@ export function OfferForm({
 
   const hasHard = hardViolations.length > 0;
   const hasWarn = warnings.length > 0;
-  const bandForFA = ovrBand(faOverall);
 
   return (
     <div className="border-t rule pt-3 mt-3">
@@ -222,6 +234,31 @@ export function OfferForm({
             </div>
           </div>
 
+          <div className="font-mono text-[10px] tracking-widest opacity-80 mb-2 flex flex-wrap items-center gap-2">
+            <span>
+              SOFT CAP SPACE{" "}
+              <span className={capSpace < 0 ? "text-[var(--leather)]" : "text-[var(--mustard)]"}>
+                {capSpace < 0 ? "−" : ""}${Math.abs(capSpace).toFixed(2)}M
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={() => setAmount(minAmount)}
+              className="border rule px-2 py-0.5 hover:border-[var(--leather)] transition-colors"
+            >
+              MIN ${minAmount}M
+            </button>
+            {capFill && (
+              <button
+                type="button"
+                onClick={() => setAmount(capFill)}
+                className="border rule px-2 py-0.5 hover:border-[var(--leather)] transition-colors"
+              >
+                ALL CAP SPACE ${capFill}M
+              </button>
+            )}
+          </div>
+
           <form onSubmit={handleSubmit} className="grid grid-cols-12 gap-2 items-end">
             <label className="col-span-6 sm:col-span-2">
               <div className="font-mono text-[9px] tracking-widest opacity-60 mb-0.5">
@@ -235,7 +272,7 @@ export function OfferForm({
                 required
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder="8.00"
+                placeholder={minAmount}
                 className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm tabular-nums focus:border-[var(--leather)] transition-colors"
               />
             </label>
@@ -251,7 +288,7 @@ export function OfferForm({
                 required
                 value={years}
                 onChange={(e) => setYears(e.target.value)}
-                placeholder="4"
+                placeholder="1"
                 className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm tabular-nums focus:border-[var(--leather)] transition-colors"
               />
             </label>
