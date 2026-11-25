@@ -106,6 +106,7 @@ export function OfferModal({ fa, teamAbbrev, capSpace, onClose, onSubmitted }: P
             faId={fa.id}
             faName={fa.name}
             faOverall={fa.overall}
+            faStatus={fa.faStatus}
             teamAbbrev={teamAbbrev}
             capSpace={capSpace}
             onSubmitted={onSubmitted}

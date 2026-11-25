@@ -7,6 +7,8 @@ interface Props {
   faId: number;
   faName: string;
   faOverall: number;
+  /** RFAs have a 2–3 year minimum, so the years default must respect it. */
+  faStatus?: string;
   teamAbbrev: string;
   /** Soft-cap room before this offer, $M. */
   capSpace: number;
@@ -26,6 +28,12 @@ const PAYSCALE: Array<{ ovr: string; min: number; note?: string }> = [
   { ovr: "≤56", min: 1, note: "min contract" },
 ];
 
+/** Mirrors the RFA/UFA length rule in backend offer.service.ts. */
+function minYearsFor(faStatus: string | undefined, amount: number): number {
+  if (faStatus !== "RFA") return 1;
+  return amount >= 10 ? 3 : 2;
+}
+
 function ovrBand(ovr: number): string {
   if (ovr >= 70) return "70+";
   if (ovr >= 68) return "68–69";
@@ -44,6 +52,7 @@ export function OfferForm({
   faId,
   faName,
   faOverall,
+  faStatus,
   teamAbbrev,
   capSpace,
   onSubmitted,
@@ -56,7 +65,10 @@ export function OfferForm({
       ? String(Math.floor(capSpace * 100) / 100)
       : null;
   const [amount, setAmount] = useState(minAmount);
-  const [years, setYears] = useState("1");
+  // Default to the shortest *legal* length. A flat "1" is illegal for an RFA,
+  // which made the form flag a violation right after a successful submit.
+  const defaultYears = String(minYearsFor(faStatus, Number(minAmount)));
+  const [years, setYears] = useState(defaultYears);
   const [gm, setGm] = useState("");
   const [codeWord, setCodeWord] = useState("");
   const [useMLE, setUseMLE] = useState(false);
@@ -164,8 +176,9 @@ export function OfferForm({
         if (codeWord.trim())
           window.localStorage.setItem("gmCodeWord", codeWord.trim());
       }
-      setAmount(minAmount);
-      setYears("1");
+      // clear rather than pre-fill, so nothing looks like it changed the offer
+      setAmount("");
+      setYears("");
       setUseMLE(false);
       setTierTouched(false);
       setUseDoubleDip(false);
@@ -191,6 +204,16 @@ export function OfferForm({
   return (
     <div className="border-t rule pt-3 mt-3">
       <div className="eyebrow opacity-70 mb-2">SEND OFFER · {faName}</div>
+
+      {submittedOk && (
+        <div
+          role="status"
+          ref={(el) => el?.scrollIntoView({ block: "nearest", behavior: "smooth" })}
+          className="mb-3 border-2 border-[var(--success)] bg-[color:rgba(76,175,106,0.12)] p-2 font-mono text-[11px] tracking-widest text-[var(--success)]"
+        >
+          ✓ OFFER SUBMITTED · MOD WILL SEE IT FROM HERE
+        </div>
+      )}
 
       {!teamAbbrev ? (
         <div className="font-mono text-[10px] tracking-widest opacity-60">
@@ -272,7 +295,6 @@ export function OfferForm({
                 required
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder={minAmount}
                 className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm tabular-nums focus:border-[var(--leather)] transition-colors"
               />
             </label>
@@ -288,7 +310,6 @@ export function OfferForm({
                 required
                 value={years}
                 onChange={(e) => setYears(e.target.value)}
-                placeholder="1"
                 className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm tabular-nums focus:border-[var(--leather)] transition-colors"
               />
             </label>
@@ -473,12 +494,6 @@ export function OfferForm({
                   </ul>
                 </div>
               )}
-            </div>
-          )}
-
-          {submittedOk && (
-            <div className="mt-3 border border-[var(--leather)] p-2 font-mono text-[11px] tracking-widest text-[var(--leather)]">
-              ✓ OFFER SUBMITTED · MOD WILL SEE IT FROM HERE
             </div>
           )}
         </>
