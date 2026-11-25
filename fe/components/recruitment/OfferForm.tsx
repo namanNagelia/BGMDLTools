@@ -176,8 +176,9 @@ export function OfferForm({
         if (codeWord.trim())
           window.localStorage.setItem("gmCodeWord", codeWord.trim());
       }
-      setAmount(minAmount);
-      setYears(defaultYears);
+      // clear rather than pre-fill, so nothing looks like it changed the offer
+      setAmount("");
+      setYears("");
       setUseMLE(false);
       setTierTouched(false);
       setUseDoubleDip(false);
@@ -203,6 +204,16 @@ export function OfferForm({
   return (
     <div className="border-t rule pt-3 mt-3">
       <div className="eyebrow opacity-70 mb-2">SEND OFFER · {faName}</div>
+
+      {submittedOk && (
+        <div
+          role="status"
+          ref={(el) => el?.scrollIntoView({ block: "nearest", behavior: "smooth" })}
+          className="mb-3 border-2 border-[var(--success)] bg-[color:rgba(76,175,106,0.12)] p-2 font-mono text-[11px] tracking-widest text-[var(--success)]"
+        >
+          ✓ OFFER SUBMITTED · MOD WILL SEE IT FROM HERE
+        </div>
+      )}
 
       {!teamAbbrev ? (
         <div className="font-mono text-[10px] tracking-widest opacity-60">
@@ -284,7 +295,6 @@ export function OfferForm({
                 required
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
-                placeholder={minAmount}
                 className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm tabular-nums focus:border-[var(--leather)] transition-colors"
               />
             </label>
@@ -300,7 +310,6 @@ export function OfferForm({
                 required
                 value={years}
                 onChange={(e) => setYears(e.target.value)}
-                placeholder={defaultYears}
                 className="w-full bg-transparent border rule px-2 py-1 outline-none font-mono text-sm tabular-nums focus:border-[var(--leather)] transition-colors"
               />
             </label>
@@ -452,17 +461,6 @@ export function OfferForm({
               </div>
             )}
           </form>
-
-          {/* Sits right under the button (not below the preview) so it's on
-              screen on phones, where the modal scrolls. */}
-          {submittedOk && (
-            <div
-              ref={(el) => el?.scrollIntoView({ block: "nearest", behavior: "smooth" })}
-              className="mt-3 border border-[var(--leather)] p-2 font-mono text-[11px] tracking-widest text-[var(--leather)]"
-            >
-              ✓ OFFER SUBMITTED · MOD WILL SEE IT FROM HERE
-            </div>
-          )}
 
           {/* LIVE PREVIEW ----------------------------------------------- */}
           {(hasHard || hasWarn || previewing) && (

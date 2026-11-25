@@ -14,6 +14,7 @@
   --leather: #e6451f;
   --leather-2: #c93914;
   --mustard: #d9a637;
+  --success: #4caf6a;
 
   /* default theme: ink bg, paper text */
   --background: var(--ink);
