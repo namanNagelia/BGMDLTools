@@ -137,41 +137,44 @@ export async function resetSeasonFA(id: number): Promise<{
   });
 }
 
-/** Flip the season's wave; entering wave 2 converts unoffered RFAs to UFAs. */
+/**
+ * In wave 2 every RFA is a UFA. Re-run after a wave flip and after a re-ingest
+ * (the sheet still says RFA). No-op outside wave 2.
+ */
+export async function convertRFAsInWave2(
+  seasonId: number,
+  executor: Pick<typeof db, "update"> = db,
+): Promise<number> {
+  const result = await executor
+    .update(freeAgents)
+    .set({ faStatus: "UFA" })
+    .where(
+      and(
+        eq(freeAgents.seasonId, seasonId),
+        eq(freeAgents.faStatus, "RFA"),
+        sql`EXISTS (
+          SELECT 1 FROM ${seasons}
+          WHERE ${seasons.id} = ${freeAgents.seasonId} AND ${seasons.currentWave} = 2
+        )`,
+      ),
+    )
+    .returning({ id: freeAgents.id });
+  return result.length;
+}
+
+/** Flip the season's wave; in wave 2 every RFA becomes a UFA. */
 export async function setSeasonWave(
   id: number,
   wave: number,
 ): Promise<{ season: Season; convertedToUFA: number } | null> {
   return db.transaction(async (tx) => {
-    const [prev] = await tx.select().from(seasons).where(eq(seasons.id, id)).limit(1);
-    if (!prev) return null;
-
-    let convertedToUFA = 0;
-    if (prev.currentWave !== 2 && wave === 2) {
-      const result = await tx
-        .update(freeAgents)
-        .set({ faStatus: "UFA" })
-        .where(
-          and(
-            eq(freeAgents.seasonId, id),
-            eq(freeAgents.faStatus, "RFA"),
-            sql`${freeAgents.winningOfferId} IS NULL`,
-            sql`NOT EXISTS (
-              SELECT 1 FROM ${offers}
-              WHERE ${offers.freeAgentId} = ${freeAgents.id}
-                AND ${offers.status} = 'PENDING'
-            )`,
-          ),
-        )
-        .returning({ id: freeAgents.id });
-      convertedToUFA = result.length;
-    }
-
     const [row] = await tx
       .update(seasons)
       .set({ currentWave: wave })
       .where(eq(seasons.id, id))
       .returning();
+    if (!row) return null;
+    const convertedToUFA = await convertRFAsInWave2(id, tx);
     return { season: row, convertedToUFA };
   });
 }

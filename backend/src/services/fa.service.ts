@@ -14,6 +14,7 @@ import { fetchLeagueJson, LeagueFetchError } from "./league.service.js";
 import { loadFreeAgentData } from "./sheets.service.js";
 import { loadSeasonRanks } from "./rank.service.js";
 import { getSeasonRanksSheetName } from "../constants.js";
+import { convertRFAsInWave2 } from "./season.service.js";
 
 type FaStatus = "SIGNED" | "RFA" | "UFA" | "TBD";
 
@@ -615,6 +616,9 @@ export async function ingestFreeAgents(seasonId: number): Promise<IngestResult> 
         .set({ previousTeam: "FA", renounced: false })
         .where(eq(freeAgents.id, existing.id));
     }
+
+    // The sheet still says RFA for players already converted in wave 2.
+    await convertRFAsInWave2(season.id, tx);
 
     // Ranks + team payrolls hold no offer references — safe to fully replace.
     await tx.delete(marketRanks).where(eq(marketRanks.seasonId, season.id));

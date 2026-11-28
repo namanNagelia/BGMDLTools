@@ -116,6 +116,7 @@ export function RecruitmentBoard() {
   const [query, setQuery] = useState("");
   const [posFilter, setPosFilter] = useState<string>("ALL");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [showSigned, setShowSigned] = useState(false);
   const [teamFilter, setTeamFilter] = useState<string>("ALL");
   const [matchMarket, setMatchMarket] = useState(false);
   const [matchLegacy, setMatchLegacy] = useState(false);
@@ -218,6 +219,8 @@ export function RecruitmentBoard() {
     return data.freeAgents.filter((f) => {
       if (posFilter !== "ALL" && f.position !== posFilter) return false;
       if (statusFilter !== "ALL" && f.faStatus !== statusFilter) return false;
+      // Signed FAs are hidden by default; picking SIGNED in the status menu still shows them.
+      if (!showSigned && statusFilter !== "SIGNED" && f.faStatus === "SIGNED") return false;
       if (teamFilter !== "ALL" && f.previousTeam !== teamFilter) return false;
       if (matchMarket && myMarketRank != null && f.marketValue !== myMarketRank)
         return false;
@@ -231,6 +234,7 @@ export function RecruitmentBoard() {
     query,
     posFilter,
     statusFilter,
+    showSigned,
     teamFilter,
     matchMarket,
     matchLegacy,
@@ -534,6 +538,19 @@ export function RecruitmentBoard() {
             </option>
           ))}
         </select>
+
+        <label className="sm:col-span-12 flex items-center gap-2 cursor-pointer select-none font-mono text-[10px] tracking-widest">
+          <input
+            type="checkbox"
+            checked={showSigned}
+            onChange={(e) => {
+              setShowSigned(e.target.checked);
+              setPage(0);
+            }}
+            className="accent-[var(--leather)] w-4 h-4"
+          />
+          SHOW SIGNED
+        </label>
 
         {gmTeam && (myMarketRank != null || myLegacyTier != null) && (
           <div className="sm:col-span-12 border-t rule pt-2 mt-1 flex flex-wrap items-center gap-4 font-mono text-[10px] tracking-widest">

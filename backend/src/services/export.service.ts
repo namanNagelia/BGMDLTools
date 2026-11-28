@@ -8,6 +8,28 @@ import { fetchLeagueJson, LeagueFetchError } from "./league.service.js";
 const normName = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 
 /**
+ * Write a signed deal ($M/yr, years) onto a BBGM player. v75 exports keep a
+ * `contracts` history whose last entry is the live deal (for an FA, his asking
+ * contract); older exports use a single `contract`.
+ */
+export function applySignedContract(
+  p: { contract?: { amount?: number; exp?: number }; contracts?: Array<{ start: number; amounts: number[] }> },
+  seasonNumber: number,
+  amountMillions: number,
+  years: number,
+): void {
+  const amount = Math.round(amountMillions * 1000);
+  if (Array.isArray(p.contracts)) {
+    const start = seasonNumber + 1;
+    // Drop the FA asking deal (or anything else) that would overlap the signing.
+    p.contracts = p.contracts.filter((c) => c.start < start);
+    p.contracts.push({ start, amounts: Array(years).fill(amount) });
+    return;
+  }
+  p.contract = { amount, exp: seasonNumber + years };
+}
+
+/**
  * Pull the league export, apply every ACCEPTED offer (set player.tid +
  * player.contract on each signed FA), and stream the gzipped result to `res`.
  *
@@ -64,6 +86,7 @@ export async function streamSignedExport(
         firstName?: string;
         lastName?: string;
         contract?: { amount?: number; exp?: number };
+        contracts?: Array<{ start: number; amounts: number[] }>;
       }>;
     };
     if (!data || !Array.isArray(data.players)) {
@@ -92,10 +115,7 @@ export async function streamSignedExport(
         continue;
       }
       p.tid = tid;
-      p.contract = {
-        amount: Math.round(Number(a.offer.offerAmount) * 1000),
-        exp: season.seasonNumber + a.offer.offerLength,
-      };
+      applySignedContract(p, season.seasonNumber, Number(a.offer.offerAmount), a.offer.offerLength);
     }
     if (unmatched.length) {
       console.warn(
